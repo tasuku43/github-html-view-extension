@@ -106,6 +106,13 @@ test('adds ?plain=1 for Code and removes it for Preview', () => {
   assert.equal(previewHref(clean), clean);
 });
 
+test('marks a Blame source request without changing its view path', () => {
+  assert.equal(
+    sourceHref('https://github.com/o/r/blame/main/a.html'),
+    'https://github.com/o/r/blame/main/a.html?plain=1',
+  );
+});
+
 test('preserves unrelated query parameters when switching views', () => {
   assert.equal(
     sourceHref('https://github.com/o/r/blob/main/a.html?ts=4'),

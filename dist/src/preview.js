@@ -853,11 +853,26 @@
     }
   })();
 
-  githubDom.onLeavePreview(() => {
-    if (blobUrl.parseBlobUrl(location.href) === null) {
+  githubDom.onLeavePreview(({ label } = {}) => {
+    const file = blobUrl.parseFileUrl(location.href);
+    if (file === null) {
       return;
     }
-    go(blobUrl.sourceHref(location.href));
+    if (label === 'code') {
+      // Blame -> Code is a GitHub navigation from /blame/ to /blob/. GitHub does not
+      // carry the source-view query over, so remember the intent until the blob page
+      // arrives and then add ?plain=1 there.
+      if (file.view === 'blame') {
+        wantsSourceUntil = Date.now() + INTENT_MS;
+      }
+      go(blobUrl.sourceHref(location.href));
+      return;
+    }
+    if (label === 'blame') {
+      // Let GitHub perform the normal /blob/ -> /blame/ navigation. Preview remains a
+      // visible, unselected peer on the resulting Blame page.
+      wantsSourceUntil = 0;
+    }
   });
 
   apply();

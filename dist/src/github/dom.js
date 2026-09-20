@@ -227,7 +227,9 @@
         if (item === null || item.hasAttribute(LINK_MARK)) {
           return;
         }
-        handle();
+        const control = item.matches('a, button') ? item : item.querySelector('a, button');
+        const label = (control || item).textContent.trim().toLowerCase();
+        handle({ item, control, label });
       },
       true,
     );
