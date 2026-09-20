@@ -52,6 +52,7 @@ detached document before it reaches the sandbox.
 | Module | Responsibility |
 | --- | --- |
 | `src/lib/blob-url.js` | Parse GitHub file URLs and build view/raw URLs. |
+| `src/lib/view-transition.js` | Describe Blob/Blame/Code/Preview states and plan view changes without touching the DOM. |
 | `src/lib/allowlist.js` | Parse, validate, and match exact repository entries. |
 | `src/lib/inline.js` | Classify references and rewrite CSS/srcset values. |
 | `src/github/dom.js` | Insert controls, mount the frame, inline detached HTML, and resize it. |

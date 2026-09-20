@@ -229,7 +229,7 @@
         }
         const control = item.matches('a, button') ? item : item.querySelector('a, button');
         const label = (control || item).textContent.trim().toLowerCase();
-        handle({ item, control, label });
+        handle({ item, control, label, event });
       },
       true,
     );

@@ -7,7 +7,7 @@
 (function initPreview(global) {
   'use strict';
 
-  const { blobUrl, allowlist, githubDom, inline } = global.GHPREVIEW;
+  const { blobUrl, viewTransition, allowlist, githubDom, inline } = global.GHPREVIEW;
 
   const PREFIX = 'ghpreview:';
   const RENDER = PREFIX + 'render';
@@ -237,13 +237,6 @@
 
   let rendered = null;
 
-  /*
-   * Remember the intent to view source across a GitHub view transition. This is needed
-   * when Code is selected from Blame; onLeavePreview explains why.
-   */
-  const INTENT_MS = 1500;
-  let wantsSourceUntil = 0;
-
   /**
    * Check whether the extension is enabled for this page. When it is enabled, fetch early.
    *
@@ -297,27 +290,14 @@
     githubDom.ensureStyle(chrome.runtime.getURL('ui.css'));
     githubDom.insertPreviewLink({
       onPreview: () => {
-        // The latest explicit click wins; do not bounce back because of a previous Code click.
-        wantsSourceUntil = 0;
-        go(blobUrl.previewHref(location.href));
+        const plan = viewTransition.plan(location.href, viewTransition.VIEWS.PREVIEW);
+        go(plan.destinationHref || blobUrl.previewHref(location.href));
       },
     });
 
-    // Blame is a source-oriented view. Keep Preview visible but unselected.
-    const wantsPreview = file.view === 'blob' && blobUrl.shouldPreview(location.href);
-
-    // Arriving at Blame completes the carried intent.
-    if (file.view === 'blame') {
-      wantsSourceUntil = 0;
-    }
-
-    // GitHub can arrive here without the query after Code is selected from Blame. Add
-    // `?plain=1` or the default preview would open again.
-    if (wantsPreview && Date.now() < wantsSourceUntil) {
-      wantsSourceUntil = 0;
-      go(blobUrl.sourceHref(location.href));
-      return;
-    }
+    // Blame keeps Preview available but does not select or render it. Blob with no
+    // `?plain=1` is the only state that owns the Preview surface.
+    const wantsPreview = viewTransition.inspect(location.href).renderPreview;
 
     githubDom.markPreviewSelected(wantsPreview);
 
@@ -853,17 +833,21 @@
     }
   })();
 
-  githubDom.onLeavePreview(({ label } = {}) => {
+  githubDom.onLeavePreview(({ label, event } = {}) => {
     const file = blobUrl.parseFileUrl(location.href);
     if (file === null) {
       return;
     }
     if (label === 'code') {
-      // Blame -> Code is a GitHub navigation from /blame/ to /blob/. GitHub does not
-      // carry the source-view query over, so remember the intent until the blob page
-      // arrives and then add ?plain=1 there.
-      if (file.view === 'blame') {
-        wantsSourceUntil = Date.now() + INTENT_MS;
+      const plan = viewTransition.plan(location.href, viewTransition.VIEWS.CODE);
+      if (plan.destinationHref !== null) {
+        // Code is a source-view decision owned by the extension. Prevent GitHub's
+        // default handler from racing the canonical destination, especially on Blame.
+        if (event && typeof event.preventDefault === 'function') {
+          event.preventDefault();
+        }
+        go(plan.destinationHref);
+        return;
       }
       go(blobUrl.sourceHref(location.href));
       return;
@@ -871,7 +855,6 @@
     if (label === 'blame') {
       // Let GitHub perform the normal /blob/ -> /blame/ navigation. Preview remains a
       // visible, unselected peer on the resulting Blame page.
-      wantsSourceUntil = 0;
     }
   });
 

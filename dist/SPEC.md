@@ -91,15 +91,14 @@ in a link.
 | Preview | click `Blame` | GitHub navigates to `/blame/…` |
 | Source | click `Preview` | `?plain=1` and fragment removed; preview shown |
 | Blame | click `Preview` | full navigation to the `/blob/…` URL, preview shown |
-| Blame | click `Code` | GitHub navigates to `/blob/…`; the extension then adds `?plain=1` |
+| Blame | click `Code` | extension navigates to the canonical `/blob/…?plain=1` source URL |
 
 Clicks on `Code` and `Blame` are observed through a single capturing listener on
 `document`, not by attaching handlers to the buttons themselves.
 
-The last row needs state that outlives a navigation: at click time the URL is still the
-blame URL, so nothing can be rewritten yet. A "wants source" intent is recorded and
-consumed on arrival. It expires after 1500 ms, and is also cleared when a blame page is
-reached or when `Preview` is pressed.
+The content controller prevents GitHub's default Code handler from racing this decision.
+It maps Blame to Blob before adding `?plain=1`, so the resulting URL and selected view are
+deterministic even when GitHub replaces the page through its SPA router.
 
 ### 3.4 Selection state
 
@@ -363,10 +362,12 @@ Cloning the selected item would copy the selected styling.
 The control reserves width for the bold weight applied on selection by duplicating the
 label into `data-text`. Changing only the text makes the control jump on selection.
 
-### `Code` and `Blame` clicks are not told apart
+### View clicks are planned before navigation
 
-Distinguishing them would mean reading the visible label, which is language-dependent.
-Both lead to source, so the distinction is unnecessary.
+The capturing listener reads the visible `Code` or `Blame` label and passes the click to
+the pure view-transition contract. Code is handled by the extension because its canonical
+source URL is deterministic; Blame remains a GitHub-owned navigation because GitHub owns
+its route and line-anchor details.
 
 ### The iframe is mounted at full size before content arrives
 
