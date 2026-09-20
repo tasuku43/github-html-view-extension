@@ -55,12 +55,13 @@ detached document before it reaches the sandbox.
 | `src/lib/view-transition.js` | Describe Blob/Blame/Code/Preview states and plan view changes without touching the DOM. |
 | `src/lib/preview-session.js` | Own request/session identity, generation, lifecycle phase, and stale-operation invalidation. |
 | `src/lib/allowlist.js` | Parse, validate, and match exact repository entries. |
+| `src/lib/settings.js` | Normalize the disabled-by-default settings object and repository list. |
 | `src/lib/inline.js` | Classify references and rewrite CSS/srcset values. |
 | `src/github/dom.js` | Insert controls, mount the frame, inline detached HTML, and resize it. |
 | `src/preview.js` | Coordinate settings, navigation, fetches, and sandbox handoff. |
 | `src/worker.js` | Validate requests and fetch GitHub content. |
 | `sandbox.html` / `sandbox.js` | Provide the isolated render surface and handshake. |
-| `options.html` / `options.js` | Edit the baseline allowlist. |
+| `popup.html` / `popup.js` | Edit settings and the exact repository allowlist. |
 
 ## GitHub navigation
 

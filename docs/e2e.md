@@ -25,8 +25,9 @@ GHPREVIEW_E2E_EXPECT_STATE=ready \
 npm run e2e
 ```
 
-The runner configures the exact `owner/repository` allowlist entry in a temporary browser
-profile. It then checks the initial Preview state and the following navigation contract:
+The runner opens the Action Popup in a temporary browser profile, verifies the disabled
+first-run state, enables Preview, adds the exact `owner/repository` entry, and then checks
+the initial Preview state and the following navigation contract:
 
 ```text
 Preview -> Code
@@ -54,9 +55,8 @@ npm run e2e
 - Blame -> Code ends at the Blob source URL with `?plain=1`;
 - the extension's Preview control remains available after GitHub SPA navigation.
 
-The preview runner intentionally configures storage directly so a settings-page rendering
-problem cannot hide a Preview regression. The settings UI should have its own browser test
-once the Action Popup is implemented.
+The same run verifies the Popup-to-storage contract before opening GitHub, so a Popup
+regression is visible rather than being hidden by direct storage setup.
 
 The default run keeps the browser visible because extension loading is more reliable in a
 persistent headed context. Set `GHPREVIEW_E2E_HEADLESS=1` only when the selected browser

@@ -1,4 +1,4 @@
-# ghpreview — Specification
+# HTML Preview — Specification
 
 A snapshot of what the extension does today. No history, no roadmap.
 
@@ -24,22 +24,40 @@ The extension acts on a page only when **all** of the following hold.
 | Host | `github.com` |
 | Path | `/{owner}/{repo}/blob/{ref}/{path}` or `/{owner}/{repo}/blame/{ref}/{path}` |
 | Extension | `.html`, `.htm`, or `.xhtml`, case-insensitive |
+| Global setting | `previewEnabled` is `true` |
 | Repository | listed in the viewer's allowlist |
 
 On every other page the extension inserts nothing and fetches nothing.
 
 Content scripts are registered for `https://github.com/*` and run at `document_start`.
 
-### 2.1 Allowlist
+### 2.1 Settings and allowlist
 
-- Stored in `chrome.storage.local` under the key `allowlist`, as the raw text of the
-  settings textarea.
-- One entry per line. Text from `#` to end of line is a comment. Blank lines are ignored.
+Settings are edited in the Chrome Action Popup and stored in `chrome.storage.local` under
+the `settings` key:
+
+```json
+{
+  "schemaVersion": 1,
+  "previewEnabled": false,
+  "capabilities": {
+    "javascript": false,
+    "forms": false,
+    "popups": false,
+    "modals": false
+  },
+  "repositories": []
+}
+```
+
+- The Popup uses an exact `owner/repository` input and lists registered entries.
+- Entries can be removed and are saved immediately.
 - An entry must match `^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`.
-- Matching is exact, case-insensitive.
-- **Wildcards are rejected**, at save time and again at match time.
-- Entries that fail validation are not saved, and the offending lines are shown
-  back to the user.
+- Matching is exact apart from case.
+- **Wildcards and duplicates are rejected** with English feedback.
+- The Worker normalizes and rechecks settings before every fetch.
+- `previewEnabled` is the master switch. Capability switches are disabled in the Popup
+  while the master switch is off, and all switches start off.
 
 Adding a repository means: *HTML in this repository may execute as soon as it is opened.*
 That includes code written by anyone who can open a pull request against it.
@@ -121,8 +139,10 @@ containing `sandbox allow-scripts`, which means:
 - `chrome.*` is unavailable — the page cannot borrow extension privileges;
 - inline `<script>` executes — charts and diagrams work.
 
-The `<iframe>` element additionally carries
-`sandbox="allow-scripts allow-forms allow-popups allow-modals"`.
+The `<iframe>` element always carries `allow-scripts` for the bundled bootstrap. It adds
+`allow-forms`, `allow-popups`, and `allow-modals` only when their corresponding settings
+are enabled. When the JavaScript capability is off, repository `<script>` elements and
+inline event-handler attributes are removed before the document is sent to the sandbox.
 
 **`allow-same-origin` appears nowhere** — not on the element, not in the page CSP.
 
@@ -152,7 +172,8 @@ All network access happens in the service worker.
 - Redirects followed (the `/raw/` path redirects to another host)
 - Hard limit of 8 MB per resource
 - The worker serves requests only from content scripts running on `https://github.com/`,
-  and only fetches URLs under `https://github.com/`
+  only fetches URLs under `https://github.com/`, and requires the target repository to
+  match the sender's repository and the current settings allowlist.
 - Responses are returned both as UTF-8 text and as base64
 - Results are cached per page, keyed by URL
 
@@ -270,7 +291,7 @@ selector warnings keep the `[ghpreview]` prefix and are printed once per message
 
 | Declaration | Reason |
 | --- | --- |
-| `storage` | the allowlist |
+| `storage` | normalized settings and the exact repository allowlist |
 | `host_permissions: github.com` | fetching file contents |
 | `host_permissions: objects/raw/media.githubusercontent.com` | redirect targets of `/raw/` |
 

@@ -1,7 +1,7 @@
 # Baseline maintenance notes
 
-This directory is the known-good JavaScript baseline for the extension. It is kept
-behaviorally stable while a later TypeScript implementation is built beside it.
+This directory contains the maintained JavaScript implementation for the extension. Keep
+changes incremental and browser-verifiable while the product contract settles.
 
 ## Product
 
@@ -9,8 +9,9 @@ The extension previews allowlisted `.html`, `.htm`, and `.xhtml` files on GitHub
 adds `Preview` beside `Code` and `Blame`, keeps those native controls available, and
 uses `?plain=1` for the source view. Markdown is outside this extension's scope.
 
-The allowlist is explicit `owner/repository` entries. Wildcards are rejected and matching
-is case-insensitive. An empty allowlist enables nothing.
+The settings object is disabled by default. Its allowlist contains explicit
+`owner/repository` entries. Wildcards are rejected and matching is case-insensitive. An
+empty allowlist enables nothing.
 
 ## Security boundaries
 
@@ -26,10 +27,12 @@ is case-insensitive. An empty allowlist enables nothing.
 
 - `src/github/dom.js` is the only module that touches GitHub page DOM.
 - `src/lib/` contains pure URL, allowlist, and resource-classification logic.
+- `src/lib/settings.js` owns the normalized settings contract shared by the Popup, content
+  script, and Worker.
 - `src/worker.js` is the only outbound fetch path.
 - `src/preview.js` coordinates GitHub navigation, fetching, inlining, and sandbox handoff.
 - `sandbox.html` and `sandbox.js` are the isolated execution surface.
-- `options.html` and `options.js` are the baseline settings surface.
+- `popup.html`, `popup.css`, and `popup.js` are the Action Popup settings surface.
 
 ## Tests
 

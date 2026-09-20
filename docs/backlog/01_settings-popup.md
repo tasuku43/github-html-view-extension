@@ -1,6 +1,6 @@
 # 01 — Action Popup and Settings
 
-Status: Planned  
+Status: In Progress
 Priority: P0 — required for the product contract
 
 ## Goal
@@ -11,7 +11,7 @@ and inactive by default, while still making the exact repository approval model 
 ## Scope
 
 - Add an Action Popup entry to the MV3 manifest.
-- Store one normalized settings object in `chrome.storage.local`:
+- Store one normalized settings object in `chrome.storage.local` under `settings`:
 
   ```json
   {
@@ -45,8 +45,10 @@ and inactive by default, while still making the exact repository approval model 
 - When the repository is not allowlisted, the content script must not fetch or mount a
   Preview.
 - The Worker must recheck the normalized settings before serving a fetch request.
-- The sandbox must receive only the capabilities that are enabled:
-  `allow-scripts`, `allow-forms`, `allow-popups`, and `allow-modals`.
+- The sandbox must receive only the optional capabilities that are enabled:
+  `allow-forms`, `allow-popups`, and `allow-modals`. Its bundled bootstrap always requires
+  `allow-scripts`; the JavaScript capability controls repository scripts and inline event
+  handlers before the document is sent to the sandbox.
 - JavaScript-disabled rendering must remove scripts and inline event handlers according to
   the existing HTML policy.
 

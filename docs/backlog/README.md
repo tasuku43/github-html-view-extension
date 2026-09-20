@@ -31,7 +31,7 @@ commit that changes the work state.
 
 | Item | Priority | Status | Next evidence |
 | --- | --- | --- | --- |
-| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | Planned | Popup-to-GitHub E2E |
+| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | In Progress | Popup-to-GitHub E2E |
 | [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Planned | Valid and policy fixture runs |
 | [03 — Minimal Release Gates](03_release-gates.md) | P1 | Planned | Fresh-checkout verification |
 | [90 — Deferred Architecture Work](90_deferred-architecture.md) | P2 | Deferred | A measured maintenance need |

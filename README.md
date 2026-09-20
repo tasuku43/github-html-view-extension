@@ -9,13 +9,14 @@ reproducible before replacing any part of it. Stronger observability, the final 
 experience, and any future source/build tooling will be introduced incrementally with a
 working browser checkpoint after each change.
 
-## Baseline behavior
+## Current behavior
 
 - Preview allowlisted `.html`, `.htm`, and `.xhtml` files on GitHub blob pages.
 - Keep `Preview`, `Code`, and `Blame` available as a single native-looking switch.
 - Use an extension-bundled `sandbox.html` iframe with an opaque origin.
 - Keep repository JavaScript away from the GitHub page origin.
-- Store only explicit, case-insensitive `owner/repository` allowlist entries.
+- Store one normalized settings object with an explicit, case-insensitive
+  `owner/repository` allowlist.
 
 Markdown, GitHub Enterprise hosts, pull-request file views, and module scripts are outside
 this baseline.
@@ -34,7 +35,8 @@ To load it in Chrome:
 2. Enable Developer mode.
 3. Choose **Load unpacked**.
 4. Select the repository's `dist/` directory.
-5. Open the extension options and add an exact `owner/repository` entry.
+5. Click the extension icon to open the Action Popup.
+6. Enable HTML Preview, add an exact `owner/repository` entry, and configure capabilities.
 
 The baseline documentation and tests live under `dist/`. The extension uses
 `dist/sandbox.html` as its iframe entry point; do not change that startup path while using

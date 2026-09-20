@@ -9,7 +9,7 @@ TypeScript implementation is developed incrementally.
 - Previews allowlisted `.html`, `.htm`, and `.xhtml` files on GitHub.
 - Adds `Preview` beside GitHub's `Code` and `Blame` controls.
 - Keeps Code and Blame available when Preview is selected.
-- Runs classic inline JavaScript inside an opaque-origin sandbox iframe.
+- Can run classic inline JavaScript inside an opaque-origin sandbox iframe when enabled.
 - Inlines supported relative CSS, JavaScript, images, and other binary resources.
 - Uses `?plain=1` for the source view and accepts `#preview` links from the earlier baseline.
 
@@ -20,12 +20,13 @@ Markdown and GitHub hosts other than `github.com` are not supported.
 1. Open `chrome://extensions` in Chrome.
 2. Enable Developer mode.
 3. Select **Load unpacked** and choose this directory.
-4. Open the extension's options page.
-5. Add exact `owner/repository` entries, one per line, and save.
+4. Click the extension icon to open the Action Popup.
+5. Enable HTML Preview and add an exact `owner/repository` entry.
 6. Open an allowlisted HTML file on a GitHub blob page.
 
-The empty allowlist enables nothing. Wildcards such as `owner/*` are rejected. Matching
-ignores letter case but requires every other character to match exactly.
+Preview is disabled until the master switch is enabled. An empty allowlist enables no
+repository. Wildcards such as `owner/*` are rejected. Matching ignores letter case but
+requires every other character to match exactly.
 
 ## Diagnose a stalled preview
 

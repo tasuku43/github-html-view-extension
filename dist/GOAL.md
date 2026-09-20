@@ -10,7 +10,7 @@ destination architecture for the later TypeScript implementation.
 - Use Preview by default and `?plain=1` for source, following GitHub's Markdown behavior.
 - Inline supported relative CSS, classic JavaScript, and binary resources into one HTML
   document before loading it in the sandbox.
-- Provide a small options page for editing exact `owner/repository` entries.
+- Provide a compact Action Popup for editing settings and exact `owner/repository` entries.
 
 ## Explicit exclusions
 
