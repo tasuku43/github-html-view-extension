@@ -48,7 +48,12 @@
     emit('warn', 'stale-operation', 'preview', current, 'stale-operation', {
       stage: 'async-boundary',
     });
-    setState('stale', 'stale-operation', current);
+    // An operation can be intentionally invalidated while GitHub is rendering a 404
+    // page or while teardown is completing. Keep the settled page state stable instead
+    // of letting a late response repaint the root as stale after the surface is gone.
+    if (operation !== null) {
+      setState('stale', 'stale-operation', current);
+    }
     return true;
   }
 
