@@ -52,8 +52,9 @@ the code body instead of remaining below the preview.
 | `.react-blob-view-header-sticky ~ section` | Layout fallback; verify after GitHub changes. |
 | `#read-only-cursor-text-area` | Legacy id fallback. |
 
-If no content container is found, the baseline uses a full-page overlay and emits a
-console warning rather than silently doing nothing.
+If no content container is found, sandbox mounting is delayed and a console warning is
+emitted. A later DOM mutation retries placement into the file body. It must never cover the
+full GitHub page merely because the SPA has not finished inserting its content container.
 
 ## Deliberately unused hooks
 

@@ -34,6 +34,9 @@
 .ghpreview-frame-inline {
   display: block;
   width: 100%;
+  /* Keep the rendered document visually separated from GitHub's file toolbar without
+     changing the document's own layout or injecting padding into user HTML. */
+  margin: var(--ghpreview-top-offset, 72px) 0 48px;
   /* resizeFrame adjusts the height after the document reports it.
      This is only the initial value; stopping here would clip the document. */
   height: 80vh;
@@ -42,7 +45,20 @@
   background-color: var(--bgColor-default, #ffffff);
 }
 
-/* Fallback when the file-content container cannot be located. */
+/* Keep an early sandbox document alive without covering GitHub while its SPA DOM settles. */
+.ghpreview-frame-pending {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Legacy class: new mounts are staged instead of using a full-page fallback. */
 .ghpreview-frame-overlay {
   position: fixed;
   inset: 0;
@@ -51,6 +67,178 @@
   height: 100vh;
   border: 0;
   background-color: var(--bgColor-default, #ffffff);
+}
+
+/* ---- Preview failure surface ------------------------------------------ */
+
+.ghpreview-error-region {
+  display: flow-root;
+  width: 100%;
+  box-sizing: border-box;
+  /* Make the separation from GitHub's file toolbar visible, not just technically present. */
+  padding: var(--ghpreview-top-offset, 72px) 24px 56px;
+}
+
+.ghpreview-error-surface {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 30px 24px 26px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 8px;
+  background: var(--bgColor-inset, var(--bgColor-default, #ffffff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.08);
+  box-sizing: border-box;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.ghpreview-error-overlay {
+  position: fixed;
+  top: 72px;
+  left: 24px;
+  right: 24px;
+  z-index: 2147483000;
+  width: auto;
+  padding: 24px;
+}
+
+.ghpreview-error-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ghpreview-error-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.ghpreview-error-icon {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bgColor-danger-muted, #ffebe9);
+  color: var(--fgColor-danger, #cf222e);
+  font-weight: 700;
+}
+
+.ghpreview-error-reason {
+  margin: 10px 0 0;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-error-surface h3 {
+  margin: 24px 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.ghpreview-error-issues {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-error-issues li {
+  padding-left: 2px;
+}
+
+.ghpreview-error-issue-message {
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-error-location {
+  margin: 6px 0 2px;
+  color: var(--fgColor-muted, #8c959f);
+  font-size: 11px;
+}
+
+.ghpreview-error-location summary {
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ghpreview-error-location pre {
+  max-width: 100%;
+  margin: 6px 0 0;
+  overflow-x: auto;
+  padding: 7px 9px;
+  border: 1px solid var(--borderColor-muted, #d8dee4);
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted, #f6f8fa);
+  color: var(--fgColor-default, #1f2328);
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ghpreview-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.ghpreview-error-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ghpreview-error-button-secondary {
+  background: var(--button-default-bgColor-rest, #f6f8fa);
+  color: var(--button-default-fgColor-rest, #1f2328);
+}
+
+.ghpreview-error-button-primary {
+  border-color: var(--button-primary-borderColor-rest, #0969da);
+  background: var(--button-primary-bgColor-rest, #1f6feb);
+  color: var(--button-primary-fgColor-rest, #ffffff);
+}
+
+.ghpreview-error-button:hover {
+  filter: brightness(0.96);
+}
+
+.ghpreview-error-note {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--borderColor-muted, #d8dee4);
+  color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
+}
+
+.ghpreview-error-diagnostic {
+  margin: 8px 0 0;
+  color: var(--fgColor-muted, #8c959f);
+  font-size: 11px;
+}
+
+.ghpreview-error-diagnostic code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted, #f6f8fa);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@media (max-width: 640px) {
+  .ghpreview-frame-inline {
+    margin: var(--ghpreview-top-offset, 56px) 0 40px;
+  }
+
+  .ghpreview-error-region {
+    padding: var(--ghpreview-top-offset, 56px) 12px 40px;
+  }
+
+  .ghpreview-error-surface {
+    padding: 24px 18px 20px;
+  }
 }
 
 /* ---- Settings page ------------------------------------------------------ */

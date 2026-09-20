@@ -5,7 +5,7 @@
  * DOM-HOOKS.md records what was checked. **Some selectors still need confirmation.**
  *
  * Silent failure is the hardest failure to diagnose. Try selectors in order, warn when
- * none match, and fall back to an overlay instead of hiding the feature.
+ * none match, and defer mounting until a safe file-body boundary is available.
  */
 (function initGithubDom(global) {
   'use strict';
@@ -71,7 +71,12 @@
   const LINK_MARK = 'data-ghpreview-link';
   const LINK_SELECTOR = '[' + LINK_MARK + ']';
   const FRAME_ID = 'ghpreview-frame';
+  const ERROR_ID = 'ghpreview-error';
+  const FRAME_PENDING_CLASS = 'ghpreview-frame-pending';
+  const FRAME_OVERLAY_CLASS = 'ghpreview-frame-overlay';
   const STYLE_ID = 'ghpreview-style';
+  const PREVIEW_TOP_GAP_PX = 32;
+  let activeErrorCode = null;
 
   /**
    * Add Preview at the start of the Code / Blame switch.
@@ -267,6 +272,285 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  function createAction(label, className, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    button.addEventListener('click', handler);
+    return button;
+  }
+
+  function appendIssueLocation(item, issue) {
+    const location = issue && typeof issue === 'object' ? issue.location : null;
+    if (!location || !Number.isInteger(location.line)) {
+      return;
+    }
+
+    const details = document.createElement('details');
+    details.className = 'ghpreview-error-location';
+    details.open = true;
+
+    const summary = document.createElement('summary');
+    summary.textContent =
+      'Line ' +
+      location.line +
+      (Number.isInteger(location.column) ? ', column ' + location.column : '') +
+      (location.target ? ' · ' + location.target : '');
+    details.append(summary);
+
+    const frame = document.createElement('pre');
+    const code = document.createElement('code');
+    const target = typeof location.target === 'string' ? location.target : 'source';
+    const matched = /^([a-z][a-z0-9-]*)\[([a-z][a-z0-9-]*)\]$/i.exec(target);
+    code.textContent = matched
+      ? '<' + matched[1] + ' ' + matched[2] + '="[redacted]">'
+      : '<' + target + '> … </' + target + '>';
+    frame.append(code);
+    details.append(frame);
+    item.append(details);
+  }
+
+  /**
+   * Show an extension-owned failure surface in the same area as the preview frame.
+   *
+   * The source container stays hidden while this surface is visible. This keeps the
+   * Preview selection stable without allowing an invalid document to reach the sandbox.
+   */
+  function showError(details) {
+    removeError();
+
+    const errorCode = details.code || details.errorCode || 'preview-failed';
+    activeErrorCode = errorCode;
+
+    const region = document.createElement('section');
+    region.id = ERROR_ID;
+    region.className = 'ghpreview-error-region';
+    region.setAttribute('role', 'alert');
+    region.setAttribute('data-preview-error-code', errorCode);
+
+    const surface = document.createElement('div');
+    surface.className = 'ghpreview-error-surface';
+
+    const heading = document.createElement('div');
+    heading.className = 'ghpreview-error-heading';
+
+    const icon = document.createElement('span');
+    icon.className = 'ghpreview-error-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '!';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Preview unavailable';
+    heading.append(icon, title);
+
+    const reason = document.createElement('p');
+    reason.className = 'ghpreview-error-reason';
+    reason.textContent = details.reason || 'This file could not be previewed.';
+
+    surface.append(heading, reason);
+
+    const issues = Array.isArray(details.issues) ? details.issues : [];
+    if (issues.length > 0) {
+      const issueTitle = document.createElement('h3');
+      issueTitle.textContent = 'Detected issues';
+      const issueList = document.createElement('ul');
+      issueList.className = 'ghpreview-error-issues';
+      issues.forEach(issue => {
+        const message = typeof issue === 'string' ? issue : issue && issue.message;
+        if (typeof message !== 'string' || message === '') {
+          return;
+        }
+        const item = document.createElement('li');
+        const copy = document.createElement('div');
+        copy.className = 'ghpreview-error-issue-message';
+        copy.textContent = message;
+        item.append(copy);
+        appendIssueLocation(item, issue);
+        issueList.append(item);
+      });
+      if (issueList.childElementCount > 0) {
+        surface.append(issueTitle, issueList);
+      }
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'ghpreview-error-actions';
+    actions.append(
+      createAction('Open Code', 'ghpreview-error-button ghpreview-error-button-secondary', () => {
+        if (typeof details.onOpenCode === 'function') {
+          details.onOpenCode();
+        }
+      }),
+      createAction('Recheck', 'ghpreview-error-button ghpreview-error-button-primary', () => {
+        if (typeof details.onRecheck === 'function') {
+          details.onRecheck();
+        }
+      }),
+    );
+    surface.append(actions);
+
+    const note = document.createElement('p');
+    note.className = 'ghpreview-error-note';
+    note.textContent = 'Preview remains active. Code and Blame remain available above.';
+    surface.append(note);
+
+    const diagnostic = document.createElement('p');
+    diagnostic.className = 'ghpreview-error-diagnostic';
+    diagnostic.append('Diagnostic code: ');
+    const code = document.createElement('code');
+    code.textContent = errorCode;
+    diagnostic.append(code);
+    surface.append(diagnostic);
+
+    region.append(surface);
+
+    const frame = document.getElementById(FRAME_ID);
+    if (frame !== null) {
+      // A frame can be staged before GitHub has finished inserting its file body. Try
+      // the normal placement once more before deciding whether this is an overlay error.
+      placeFrame(frame);
+      const staged =
+        frame.classList.contains(FRAME_PENDING_CLASS) ||
+        frame.classList.contains(FRAME_OVERLAY_CLASS);
+      if (staged && hideContentForPreview()) {
+        frame.remove();
+        const body = hiddenContainer;
+        applyPreviewTopOffset(region, body.parentElement);
+        body.parentElement.insertBefore(region, body);
+        setPreviewMetadata({ ...details, errorCode });
+        return true;
+      }
+      if (staged) {
+        region.classList.add('ghpreview-error-overlay');
+      }
+      applyPreviewTopOffset(region, frame.parentElement);
+      frame.replaceWith(region);
+      setPreviewMetadata({ ...details, errorCode });
+      return true;
+    }
+
+    if (hideContentForPreview()) {
+      const body = hiddenContainer;
+      applyPreviewTopOffset(region, body.parentElement);
+      body.parentElement.insertBefore(region, body);
+      setPreviewMetadata({ ...details, errorCode });
+      return true;
+    }
+
+    region.classList.add('ghpreview-error-overlay');
+    (document.body || document.documentElement).appendChild(region);
+    setPreviewMetadata({ ...details, errorCode });
+    return true;
+  }
+
+  function removeError() {
+    const surface = document.getElementById(ERROR_ID);
+    if (surface !== null) {
+      surface.remove();
+    }
+    activeErrorCode = null;
+  }
+
+  function hasError() {
+    return document.getElementById(ERROR_ID) !== null;
+  }
+
+  function getErrorCode() {
+    const region = document.getElementById(ERROR_ID);
+    return region?.getAttribute('data-preview-error-code') || activeErrorCode;
+  }
+
+  /**
+   * Keep lifecycle metadata on the extension surface and document root.
+   *
+   * The root fallback matters during GitHub SPA transitions, when the old surface has
+   * already been removed but the new file body has not been inserted yet. Values are
+   * generated by preview.js and contain no page content, URL, or repository data.
+   */
+  function setPreviewMetadata(metadata = {}) {
+    const targets = [
+      document.documentElement,
+      document.getElementById(FRAME_ID),
+      document.getElementById(ERROR_ID),
+    ].filter(Boolean);
+    const attributes = [
+      ['data-preview-state', metadata.state],
+      ['data-preview-error-code', metadata.errorCode],
+      ['data-preview-request-id', metadata.requestId],
+      ['data-preview-session-id', metadata.sessionId],
+    ];
+    targets.forEach(target => {
+      attributes.forEach(([name, value]) => {
+        if (value === undefined || value === null || value === '') {
+          target.removeAttribute(name);
+        } else {
+          target.setAttribute(name, String(value));
+        }
+      });
+    });
+  }
+
+  /**
+   * Move an early error surface into the file body once GitHub has finished its SPA swap.
+   *
+   * Validation can finish before GitHub exposes the code container. In that window the
+   * surface has to be visible somewhere, but it must stop being an overlay as soon as the
+   * real insertion boundary becomes available.
+   */
+  function reconcileError() {
+    const region = document.getElementById(ERROR_ID);
+    if (region === null || !region.classList.contains('ghpreview-error-overlay')) {
+      return region !== null;
+    }
+    if (!hideContentForPreview()) {
+      return false;
+    }
+    const body = hiddenContainer;
+    region.classList.remove('ghpreview-error-overlay');
+    if (body.parentElement !== null) {
+      applyPreviewTopOffset(region, body.parentElement);
+      body.parentElement.insertBefore(region, body);
+    }
+    return true;
+  }
+
+  function hideContentForPreview() {
+    const container = findFirst(SELECTORS.content);
+    if (container === null) {
+      return false;
+    }
+    const body = expandToFileBody(container);
+    if (body.parentElement === null) {
+      return false;
+    }
+    body.style.display = 'none';
+    hiddenContainer = body;
+    return true;
+  }
+
+  /**
+   * GitHub's sticky file toolbar can visually overflow a zero-height layout wrapper.
+   * Calculate the offset from that wrapper's top to the toolbar's visible bottom so the
+   * preview still has a real gap after the toolbar instead of hiding the gap underneath it.
+   */
+  function previewTopOffset(boundary) {
+    const toolbar = findFirst(SELECTORS.toolbar);
+    if (toolbar === null || boundary === null) {
+      return PREVIEW_TOP_GAP_PX;
+    }
+    const boundaryRect = boundary.getBoundingClientRect();
+    const toolbarRect = toolbar.getBoundingClientRect();
+    return Math.max(
+      PREVIEW_TOP_GAP_PX,
+      Math.ceil(toolbarRect.bottom - boundaryRect.top) + PREVIEW_TOP_GAP_PX,
+    );
+  }
+
+  function applyPreviewTopOffset(surface, boundary) {
+    surface.style.setProperty('--ghpreview-top-offset', previewTopOffset(boundary) + 'px');
+  }
+
   /**
    * Mount the iframe.
    *
@@ -276,6 +560,56 @@
    */
   // Remember the hidden container so it can be restored when the preview is removed.
   let hiddenContainer = null;
+
+  /** Place an existing frame into the GitHub file body when that body is available. */
+  function placeFrame(frame) {
+    const container = findFirst(SELECTORS.content);
+    if (container === null) {
+      frame.classList.remove('ghpreview-frame-inline', FRAME_OVERLAY_CLASS);
+      frame.classList.add(FRAME_PENDING_CLASS);
+      frame.setAttribute('aria-hidden', 'true');
+      return false;
+    }
+
+    const body = expandToFileBody(container);
+    if (body.parentElement === null) {
+      return false;
+    }
+
+    frame.classList.remove(FRAME_PENDING_CLASS, FRAME_OVERLAY_CLASS);
+    frame.classList.add('ghpreview-frame-inline');
+    frame.removeAttribute('aria-hidden');
+    applyPreviewTopOffset(frame, body.parentElement);
+    body.style.display = 'none';
+    hiddenContainer = body;
+    if (frame.parentElement !== body.parentElement || frame.nextSibling !== body) {
+      body.parentElement.insertBefore(frame, body);
+    }
+    return true;
+  }
+
+  /**
+   * Keep the iframe on the extension-bundled entry point.
+   *
+   * `srcdoc` takes precedence over `src`. If another page integration or a stale frame
+   * leaves an empty `srcdoc` attribute behind, Chrome loads `about:srcdoc` instead of
+   * `sandbox.html`; the result is a white frame with no bootstrap or ready message.
+  */
+  function ensureBundledEntry(frame, sandboxUrl) {
+    // Set the fallback navigation first. Removing srcdoc below then activates this
+    // already-known entry instead of triggering a second src update afterward.
+    const needsSrc = frame.getAttribute('src') !== sandboxUrl;
+    if (needsSrc) {
+      frame.setAttribute('src', sandboxUrl);
+    }
+
+    const hadSrcdoc = frame.hasAttribute('srcdoc');
+    if (hadSrcdoc) {
+      frame.removeAttribute('srcdoc');
+      warn('sandbox-entry', 'Removed an unexpected srcdoc attribute from the sandbox frame');
+    }
+    return hadSrcdoc;
+  }
 
   /**
    * Mount the iframe. **Do so as soon as the file-content container exists, without
@@ -287,31 +621,45 @@
    *
    * Repeated calls keep one iframe and return the existing element.
    */
-  function mountFrame(sandboxUrl) {
+  function mountFrame(sandboxUrl, beforeInsert) {
     const existing = document.getElementById(FRAME_ID);
     if (existing !== null) {
-      return { frame: existing, hidden: hiddenContainer, created: false };
+      // Prepare the listener before repairing an entry that may already be navigating.
+      if (typeof beforeInsert === 'function') {
+        beforeInsert(existing, false);
+      }
+      const entryRepaired = ensureBundledEntry(existing, sandboxUrl);
+      placeFrame(existing);
+      return {
+        frame: existing,
+        hidden: hiddenContainer,
+        created: false,
+        entryRepaired,
+      };
+    }
+
+    // GitHub may still be replacing the file body. Do not create a frame outside the
+    // known content boundary: moving an already-running sandbox later can reset its
+    // document, and an overlay can cover the entire GitHub page.
+    if (findFirst(SELECTORS.content) === null) {
+      warn('content', 'The file-content container was not found; delaying sandbox mount');
+      return { frame: null, hidden: hiddenContainer, created: false };
     }
 
     const frame = document.createElement('iframe');
     frame.id = FRAME_ID;
     frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals');
+    // Set the known bundled entry point before insertion, matching the baseline startup
+    // path. The callback lets the parent subscribe before the browsing context starts.
     frame.src = sandboxUrl;
-
-    const container = findFirst(SELECTORS.content);
-    if (container === null) {
-      warn('content', 'The file-content container was not found; using the overlay fallback');
-      frame.classList.add('ghpreview-frame-overlay');
-      document.body.appendChild(frame);
-      return { frame, hidden: null, created: true };
+    if (typeof beforeInsert === 'function') {
+      beforeInsert(frame, true);
     }
-
-    const body = expandToFileBody(container);
-    frame.classList.add('ghpreview-frame-inline');
-    body.style.display = 'none';
-    hiddenContainer = body;
-    body.parentElement.insertBefore(frame, body);
-    return { frame, hidden: body, created: true };
+    placeFrame(frame);
+    // Remove any srcdoc attribute added while the host page reconciled the inserted node.
+    // The listener is already active, so a corrective navigation cannot lose the handshake.
+    const entryRepaired = ensureBundledEntry(frame, sandboxUrl);
+    return { frame, hidden: hiddenContainer, created: true, entryRepaired };
   }
 
   /**
@@ -346,6 +694,7 @@
     if (frame !== null) {
       frame.remove();
     }
+    removeError();
     if (hiddenContainer !== null) {
       hiddenContainer.style.display = '';
       hiddenContainer = null;
@@ -364,7 +713,7 @@
    *
    * @param load returns {text, dataUri} for a URL, or null when it cannot be loaded
    */
-  async function inlineDocument(htmlText, base, load) {
+  async function inlineDocument(htmlText, base, load, sessionId = '') {
     const doc = new DOMParser().parseFromString(htmlText, 'text/html');
     const notes = [];
 
@@ -388,7 +737,7 @@
       notes.push(...rewritten.notes);
     }
 
-    addHeightReporter(doc);
+    addHeightReporter(doc, sessionId);
 
     return { html: '<!doctype html>\n' + doc.documentElement.outerHTML, notes };
   }
@@ -404,6 +753,16 @@
    */
   const HEIGHT_REPORTER = [
     '(function(){',
+    '  var sessionId = __GHPREVIEW_SESSION_ID__;',
+    '  var renderReady = false;',
+    '  function post(type, payload){',
+    '    parent.postMessage(Object.assign({ type: type, sessionId: sessionId }, payload || {}), "https://github.com");',
+    '  }',
+    '  function announceReady(){',
+    '    if (renderReady) { return; }',
+    '    renderReady = true;',
+    '    post("ghpreview:render-ready");',
+    '  }',
     '  function measure(){',
     '    var d = document.documentElement;',
     '    var b = document.body;',
@@ -413,11 +772,16 @@
     '    );',
     '  }',
     '  function report(){',
-    '    parent.postMessage(',
-    '      { type: "ghpreview:height", height: measure() },',
-    '      "https://github.com",',
-    '    );',
+    '    announceReady();',
+    '    post("ghpreview:height", { height: measure() });',
     '  }',
+    '  window.addEventListener("error", function(){',
+    '    post("ghpreview:runtime-error", { errorCode: "sandbox-runtime-error" });',
+    '  });',
+    '  window.addEventListener("unhandledrejection", function(){',
+    '    post("ghpreview:runtime-error", { errorCode: "sandbox-runtime-error" });',
+    '  });',
+    '  document.addEventListener("DOMContentLoaded", announceReady);',
     '  window.addEventListener("load", report);',
     '  if (typeof ResizeObserver === "function") {',
     '    new ResizeObserver(report).observe(document.documentElement);',
@@ -430,10 +794,13 @@
     '})();',
   ].join('\n');
 
-  function addHeightReporter(doc) {
+  function addHeightReporter(doc, sessionId) {
     const script = doc.createElement('script');
-    script.textContent = HEIGHT_REPORTER;
-    (doc.body || doc.documentElement).appendChild(script);
+    script.textContent = HEIGHT_REPORTER.replace(
+      '__GHPREVIEW_SESSION_ID__',
+      JSON.stringify(typeof sessionId === 'string' ? sessionId : ''),
+    );
+    (doc.head || doc.body || doc.documentElement).appendChild(script);
   }
 
   /*
@@ -450,7 +817,10 @@
     if (frame === null || !Number.isFinite(height) || height <= 0) {
       return;
     }
-    if (frame.classList.contains('ghpreview-frame-overlay')) {
+    if (
+      frame.classList.contains(FRAME_PENDING_CLASS) ||
+      frame.classList.contains(FRAME_OVERLAY_CLASS)
+    ) {
       return;
     }
     /*
@@ -527,6 +897,12 @@
     ensureStyle,
     mountFrame,
     removeFrame,
+    showError,
+    removeError,
+    hasError,
+    getErrorCode,
+    setPreviewMetadata,
+    reconcileError,
     resizeFrame,
     inlineDocument,
     warn,
