@@ -7,7 +7,14 @@
 (function initPreview(global) {
   'use strict';
 
-  const { blobUrl, viewTransition, allowlist, githubDom, inline } = global.GHPREVIEW;
+  const {
+    blobUrl,
+    viewTransition,
+    previewSession,
+    allowlist,
+    githubDom,
+    inline,
+  } = global.GHPREVIEW;
 
   const PREFIX = 'ghpreview:';
   const RENDER = PREFIX + 'render';
@@ -20,52 +27,24 @@
   const RUNTIME_ERROR = PREFIX + 'runtime-error';
   const ALLOWLIST_KEY = 'allowlist';
 
-  const STATES = new Set([
-    'idle',
-    'detecting',
-    'checking-settings',
-    'fetching',
-    'validating',
-    'mounting',
-    'waiting-for-sandbox',
-    'rendering',
-    'waiting-for-height',
-    'ready',
-    'disabled',
-    'failed',
-    'stale',
-  ]);
-
-  let idCounter = 0;
+  const STATES = previewSession.PHASES;
   let previewState = 'idle';
   let previewErrorCode = null;
   let operation = null;
 
-  function createId(prefix) {
-    if (global.crypto && typeof global.crypto.randomUUID === 'function') {
-      return prefix + '-' + global.crypto.randomUUID();
-    }
-    idCounter += 1;
-    return prefix + '-' + Date.now().toString(36) + '-' + idCounter.toString(36);
-  }
-
   function operationFor(href) {
-    if (operation !== null && operation.href === href) {
+    if (previewSession.isCurrent(operation, operation, href)) {
       return operation;
     }
-    operation = {
-      href,
-      requestId: createId('request'),
-      sessionId: null,
-      generation: operation === null ? 1 : operation.generation + 1,
-    };
+    operation = previewSession.create(href, operation);
     return operation;
   }
 
   function isStale(current) {
-    if (current === operation && current !== null && current.href === location.href) {
+    if (previewSession.isCurrent(current, operation, location.href)) {
       return false;
     }
+    previewSession.invalidate(current, 'stale-operation');
     emit('warn', 'stale-operation', 'preview', current, 'stale-operation', {
       stage: 'async-boundary',
     });
@@ -104,6 +83,7 @@
     const changed = previewState !== next || previewErrorCode !== errorCode;
     previewState = next;
     previewErrorCode = errorCode;
+    previewSession.setPhase(current, next);
     githubDom.setPreviewMetadata({
       state: next,
       errorCode,
@@ -256,6 +236,7 @@
   function abandonOperation(reason) {
     const previous = operation;
     if (previous !== null) {
+      previewSession.invalidate(previous, reason);
       emit('debug', 'stale-operation', 'preview', previous, 'stale-operation', { stage: reason });
       setState('stale', 'stale-operation', previous);
       unmount(reason, previous);
@@ -383,6 +364,7 @@
     rendered = null;
     debug('recheck-started', { cache: 'cleared' }, current);
     unmount('recheck', current);
+    previewSession.invalidate(current, 'recheck');
     operation = null;
     apply();
   }
@@ -575,9 +557,7 @@
   }
 
   function openFrame(sandboxUrl, parsed, current) {
-    if (current.sessionId === null) {
-      current.sessionId = createId('session');
-    }
+    previewSession.attachSandbox(current);
     const entry = new URL(sandboxUrl);
     entry.searchParams.set('session', current.sessionId);
     let prepared = false;

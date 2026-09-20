@@ -21,6 +21,7 @@
       "js": [
         "src/lib/blob-url.js",
         "src/lib/view-transition.js",
+        "src/lib/preview-session.js",
         "src/lib/allowlist.js",
         "src/lib/inline.js",
         "src/github/dom.js",

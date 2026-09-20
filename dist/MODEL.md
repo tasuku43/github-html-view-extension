@@ -53,6 +53,7 @@ detached document before it reaches the sandbox.
 | --- | --- |
 | `src/lib/blob-url.js` | Parse GitHub file URLs and build view/raw URLs. |
 | `src/lib/view-transition.js` | Describe Blob/Blame/Code/Preview states and plan view changes without touching the DOM. |
+| `src/lib/preview-session.js` | Own request/session identity, generation, lifecycle phase, and stale-operation invalidation. |
 | `src/lib/allowlist.js` | Parse, validate, and match exact repository entries. |
 | `src/lib/inline.js` | Classify references and rewrite CSS/srcset values. |
 | `src/github/dom.js` | Insert controls, mount the frame, inline detached HTML, and resize it. |
