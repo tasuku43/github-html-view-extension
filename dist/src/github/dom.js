@@ -179,8 +179,25 @@
       return;
     }
     const viewSwitch = ours.parentElement;
+    // GitHub may have inserted the new view with its native selection before the
+    // controller runs. Capture that selection before changing any item; otherwise the
+    // first reconciliation records the marker but leaves every item visually unselected.
+    const nativeSelected = new Set(
+      Array.from(viewSwitch.children).filter(
+        item =>
+          item.hasAttribute('data-selected') ||
+          item.getAttribute('aria-selected') === 'true' ||
+          item.querySelector('a, button')?.getAttribute('aria-pressed') === 'true',
+      ),
+    );
+    nativeSelected.forEach(item => {
+      if (!item.hasAttribute(LINK_MARK)) {
+        item.setAttribute(ORIGINAL_MARK, '');
+      }
+    });
     Array.from(viewSwitch.children).forEach(item => {
-      const selected = item === ours ? isPreview : !isPreview && wasSelected(item);
+      const selected =
+        item === ours ? isPreview : !isPreview && (wasSelected(item) || nativeSelected.has(item));
       setSelected(item, selected);
     });
   }
@@ -456,6 +473,31 @@
 
   function hasError() {
     return document.getElementById(ERROR_ID) !== null;
+  }
+
+  function hasPreviewLink() {
+    return document.querySelector(LINK_SELECTOR) !== null;
+  }
+
+  function hasFrame() {
+    return document.getElementById(FRAME_ID) !== null;
+  }
+
+  /**
+   * Report whether the host page has exposed a boundary that still needs reconciliation.
+   * The controller uses this to distinguish GitHub's incomplete SPA swap from mutations
+   * caused by the extension's own iframe, error surface, or lifecycle attributes.
+   */
+  function needsReconcile() {
+    const frame = document.getElementById(FRAME_ID);
+    if (
+      frame !== null &&
+      (frame.classList.contains(FRAME_PENDING_CLASS) || frame.classList.contains(FRAME_OVERLAY_CLASS))
+    ) {
+      return true;
+    }
+    const error = document.getElementById(ERROR_ID);
+    return error !== null && error.classList.contains('ghpreview-error-overlay');
   }
 
   function getErrorCode() {
@@ -902,6 +944,9 @@
     showError,
     removeError,
     hasError,
+    hasPreviewLink,
+    hasFrame,
+    needsReconcile,
     getErrorCode,
     setPreviewMetadata,
     reconcileError,

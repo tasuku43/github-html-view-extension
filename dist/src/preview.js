@@ -761,13 +761,43 @@
   let seen = location.href;
   let timer = null;
 
+  function shouldReapplyAfterMutation() {
+    const file = blobUrl.parseFileUrl(location.href);
+    if (file === null || !blobUrl.isHtmlPath(file.refAndPath)) {
+      return false;
+    }
+    // Settings are still being read or a disabled page is already settled. Re-entering
+    // apply here would create concurrent operations while GitHub is rendering its shell.
+    if (previewState === 'detecting' || previewState === 'checking-settings' || previewState === 'disabled') {
+      return false;
+    }
+    if (githubDom.needsReconcile()) {
+      return true;
+    }
+    if (!githubDom.hasPreviewLink()) {
+      return true;
+    }
+    if (previewState === 'failed' && !githubDom.hasError()) {
+      return true;
+    }
+    if (previewState === 'ready' && !githubDom.hasFrame()) {
+      return true;
+    }
+    return (
+      ['mounting', 'fetching', 'validating', 'rendering', 'waiting-for-sandbox', 'waiting-for-height'].includes(
+        previewState,
+      ) && !githubDom.hasFrame()
+    );
+  }
+
   function onMutated() {
     if (timer !== null) {
       return;
     }
     timer = setTimeout(() => {
       timer = null;
-      if (location.href !== seen) {
+      const changed = location.href !== seen;
+      if (changed) {
         seen = location.href;
         // Clear the previous page before applying the new one, including restoring hidden
         // source content. Record the abandoned async operation instead of letting it
@@ -775,7 +805,9 @@
         abandonOperation('navigation');
         githubDom.removePreviewLink();
       }
-      apply();
+      if (changed || shouldReapplyAfterMutation()) {
+        apply();
+      }
     }, 150);
   }
 
