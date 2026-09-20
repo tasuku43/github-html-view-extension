@@ -1,0 +1,8 @@
+{
+  "name": "github-html-preview",
+  "private": true,
+  "description": "Incremental development workspace for a GitHub HTML preview extension.",
+  "scripts": {
+    "test": "npm --prefix dist test"
+  }
+}

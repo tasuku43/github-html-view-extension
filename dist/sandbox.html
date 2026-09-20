@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ghpreview</title>
+<!--
+  Rendering happens in this page.
+
+  This page is listed in the manifest's "sandbox" section, so Chrome serves it with
+  the sandbox allow-scripts policy. Its origin is opaque, it cannot access the
+  github.com DOM or cookies, and it cannot access chrome APIs. Repository JavaScript
+  is allowed to run only here (see MODEL.md).
+
+  This page also renders the loading state before the document arrives. The iframe is
+  mounted before fetching finishes, so this message provides its initial layout.
+  No overlay is needed and the document has the correct width from the beginning.
+-->
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+  }
+
+  .waiting {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #59636e;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      background-color: #0d1117;
+    }
+
+    .waiting {
+      color: #9198a1;
+    }
+  }
+</style>
+<div class="waiting">Loading preview…</div>
+<script src="sandbox.js"></script>

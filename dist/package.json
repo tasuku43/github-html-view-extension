@@ -1,0 +1,8 @@
+{
+  "name": "ghpreview",
+  "private": true,
+  "description": "Preview HTML files from explicitly allowlisted GitHub repositories.",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  }
+}

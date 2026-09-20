@@ -1,0 +1,534 @@
+/*
+ * The only module that touches GitHub's page. Keep fragile DOM integration here.
+ *
+ * GitHub does not publish this DOM contract, so selectors are based on the live page.
+ * DOM-HOOKS.md records what was checked. **Some selectors still need confirmation.**
+ *
+ * Silent failure is the hardest failure to diagnose. Try selectors in order, warn when
+ * none match, and fall back to an overlay instead of hiding the feature.
+ */
+(function initGithubDom(global) {
+  'use strict';
+
+  const { inline } = global.GHPREVIEW;
+
+  /*
+   * Try stronger, more semantic clues before weaker layout clues.
+   * Keep this order so the selector that matched can be identified during debugging.
+   */
+  const SELECTORS = {
+    /*
+     * Code / Blame switch. This is where GitHub chooses how to view the same file, so it
+     * is also the natural home for Preview. The actions on the right (Raw, copy, download,
+     * and edit) export or modify the file and have a different purpose.
+     */
+    viewSwitch: [
+      'ul[aria-label="File view"]',
+      'ul[data-component="SegmentedControl"]',
+    ],
+    // One item in the switch. Use an unselected item as the visual template.
+    viewSwitchItem: 'li[data-component="SegmentedControl.Button"]',
+    viewSwitchSpare: 'li[data-component="SegmentedControl.Button"]:not([data-selected])',
+    // File header toolbar. It defines the boundary for hiding file content and is the
+    // fallback insertion point when the view switch is unavailable.
+    toolbar: [
+      '[data-testid="raw-button"]',
+      '[data-testid="copy-raw-button"]',
+      '[aria-label="Raw"]',
+    ],
+    // File-content container. Hide it and place the preview iframe in its position.
+    content: [
+      '[data-testid="read-only-cursor-text-area"]',
+      '[data-testid="blob-viewer-file-content"]',
+      '.react-blob-view-header-sticky ~ section',
+      '#read-only-cursor-text-area',
+    ],
+  };
+
+  const warned = new Set();
+
+  function warn(key, message) {
+    if (warned.has(key)) {
+      return;
+    }
+    warned.add(key);
+    console.warn('[ghpreview] ' + message);
+  }
+
+  /** Return the first matching selector. */
+  function findFirst(candidates) {
+    for (const selector of candidates) {
+      const found = document.querySelector(selector);
+      if (found !== null) {
+        return found;
+      }
+    }
+    return null;
+  }
+
+  // Mark inserted elements with an attribute rather than an id. The marker belongs to the
+  // cloned item in the view switch and to the link itself in the toolbar fallback.
+  const LINK_MARK = 'data-ghpreview-link';
+  const LINK_SELECTOR = '[' + LINK_MARK + ']';
+  const FRAME_ID = 'ghpreview-frame';
+  const STYLE_ID = 'ghpreview-style';
+
+  /**
+   * Add Preview at the start of the Code / Blame switch.
+   *
+   * Follow the shape GitHub uses for `.md` files. Do not create a separate panel or
+   * toolbar (GOAL.md).
+   */
+  function insertPreviewLink(handlers) {
+    if (document.querySelector(LINK_SELECTOR) !== null) {
+      return true;
+    }
+
+    const viewSwitch = findFirst(SELECTORS.viewSwitch);
+    if (viewSwitch !== null) {
+      return insertIntoViewSwitch(viewSwitch, handlers);
+    }
+
+    const anchorPoint = findFirst(SELECTORS.toolbar);
+    if (anchorPoint === null) {
+      warn('toolbar', 'The file toolbar was not found; Preview cannot be inserted');
+      return false;
+    }
+    return insertBeside(anchorPoint, handlers);
+  }
+
+  /**
+   * Insert at the start of the view switch.
+   *
+   * **Clone a neighboring item to borrow its appearance.** Do not depend on GitHub's
+   * generated class names; reuse the same structure so minor naming changes are less
+   * disruptive (see DOM-HOOKS.md).
+   *
+   * Prefer an unselected item. Cloning the selected item would copy its active styling.
+   */
+  function insertIntoViewSwitch(viewSwitch, handlers) {
+    const spare =
+      viewSwitch.querySelector(SELECTORS.viewSwitchSpare) ||
+      viewSwitch.querySelector(SELECTORS.viewSwitchItem);
+    if (spare === null) {
+      warn('view-switch', 'The view switch has no items; falling back beside Raw');
+      const anchorPoint = findFirst(SELECTORS.toolbar);
+      return anchorPoint === null ? false : insertBeside(anchorPoint, handlers);
+    }
+
+    const clone = spare.cloneNode(true);
+
+    // Keep the visual structure but remove identity markers. Duplicated markers would
+    // confuse code that locates the original GitHub items.
+    forEachIncludingSelf(clone, node => {
+      node.removeAttribute('id');
+      node.removeAttribute('data-testid');
+      node.removeAttribute('aria-current');
+      node.removeAttribute('aria-selected');
+      node.removeAttribute('data-selected');
+    });
+
+    const control = clone.matches('a, button') ? clone : clone.querySelector('a, button');
+    if (control === null) {
+      warn('view-switch', 'The view switch has no clickable control; falling back beside Raw');
+      const anchorPoint = findFirst(SELECTORS.toolbar);
+      return anchorPoint === null ? false : insertBeside(anchorPoint, handlers);
+    }
+
+    setLabel(clone, control, 'Preview');
+    control.addEventListener('click', event => {
+      event.preventDefault();
+      handlers.onPreview();
+    });
+
+    clone.setAttribute(LINK_MARK, '');
+    viewSwitch.insertBefore(clone, viewSwitch.firstElementChild);
+    return true;
+  }
+
+  /**
+   * Replace the visible label.
+   *
+   * **Update `data-text` as well as the visible text.** GitHub uses the duplicate value to
+   * reserve width when the selected item becomes bold. Updating only one would shift the
+   * switch when Preview is selected.
+   */
+  function setLabel(clone, control, label) {
+    const holder = clone.querySelector('[data-text]');
+    if (holder === null) {
+      control.textContent = label;
+      return;
+    }
+    holder.textContent = label;
+    holder.setAttribute('data-text', label);
+  }
+
+  /**
+   * Reflect the current selection in the view switch.
+   *
+   * Preview is a peer option; omitting this would make it look unselected after a click.
+   */
+  function markPreviewSelected(isPreview) {
+    const ours = document.querySelector(LINK_SELECTOR);
+    if (ours === null || !ours.matches(SELECTORS.viewSwitchItem)) {
+      return;
+    }
+    const viewSwitch = ours.parentElement;
+    Array.from(viewSwitch.children).forEach(item => {
+      const selected = item === ours ? isPreview : !isPreview && wasSelected(item);
+      setSelected(item, selected);
+    });
+  }
+
+  /*
+   * Remember the originally selected item. It must be restored when leaving Preview, so
+   * the original selection cannot be lost.
+   */
+  const ORIGINAL_MARK = 'data-ghpreview-was-selected';
+
+  function wasSelected(item) {
+    return item.hasAttribute(ORIGINAL_MARK);
+  }
+
+  function setSelected(item, selected) {
+    if (item.hasAttribute('data-selected') && !item.hasAttribute(LINK_MARK)) {
+      item.setAttribute(ORIGINAL_MARK, '');
+    }
+    if (selected) {
+      item.setAttribute('data-selected', '');
+    } else {
+      item.removeAttribute('data-selected');
+    }
+    const control = item.querySelector('a, button');
+    if (control !== null && control.hasAttribute('aria-pressed')) {
+      control.setAttribute('aria-pressed', selected ? 'true' : 'false');
+    }
+  }
+
+  /**
+   * Observe clicks on Code and Blame.
+   *
+   * These controls do not always change the query, so the controller must apply
+   * `?plain=1` itself. **Do not bind only to individual buttons.** GitHub can replace the
+   * view, so listen at document level and inspect the clicked item.
+   */
+  function onLeavePreview(handle) {
+    document.addEventListener(
+      'click',
+      event => {
+        const item = event.target.closest
+          ? event.target.closest(SELECTORS.viewSwitchItem)
+          : null;
+        if (item === null || item.hasAttribute(LINK_MARK)) {
+          return;
+        }
+        handle();
+      },
+      true,
+    );
+  }
+
+  function forEachIncludingSelf(root, handle) {
+    handle(root);
+    root.querySelectorAll('*').forEach(handle);
+  }
+
+  /** Fallback insertion point beside Raw when the view switch is unavailable. */
+  function insertBeside(anchorPoint, handlers) {
+    const link = document.createElement('a');
+    link.setAttribute(LINK_MARK, '');
+    link.className = 'ghpreview-link';
+    link.href = '#';
+    link.textContent = 'Preview';
+    link.addEventListener('click', event => {
+      event.preventDefault();
+      handlers.onPreview();
+    });
+
+    const holder = anchorPoint.closest('div') || anchorPoint.parentElement;
+    holder.parentElement.insertBefore(link, holder.nextSibling);
+    return true;
+  }
+
+  function removePreviewLink() {
+    document.querySelectorAll(LINK_SELECTOR).forEach(node => node.remove());
+  }
+
+  /** Load extension styles with a ghpreview- namespace to avoid GitHub collisions. */
+  function ensureStyle(cssUrl) {
+    if (document.getElementById(STYLE_ID) !== null) {
+      return;
+    }
+    const style = document.createElement('link');
+    style.id = STYLE_ID;
+    style.rel = 'stylesheet';
+    style.href = cssUrl;
+    // document_start can run before head exists.
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  /**
+   * Mount the iframe.
+   *
+   * > **Never add `allow-same-origin`.** It would let code from a repository contributor
+   * > act as the viewer on github.com. The iframe attribute and sandbox page policy both
+   * > enforce this boundary (MODEL.md).
+   */
+  // Remember the hidden container so it can be restored when the preview is removed.
+  let hiddenContainer = null;
+
+  /**
+   * Mount the iframe. **Do so as soon as the file-content container exists, without
+   * waiting for the fetch.**
+   *
+   * Waiting would leave the source visible and cause a visual jump. The sandbox page
+   * owns the loading message, so no placeholder is needed here. Mounting early also
+   * gives the document its correct width from the beginning.
+   *
+   * Repeated calls keep one iframe and return the existing element.
+   */
+  function mountFrame(sandboxUrl) {
+    const existing = document.getElementById(FRAME_ID);
+    if (existing !== null) {
+      return { frame: existing, hidden: hiddenContainer, created: false };
+    }
+
+    const frame = document.createElement('iframe');
+    frame.id = FRAME_ID;
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals');
+    frame.src = sandboxUrl;
+
+    const container = findFirst(SELECTORS.content);
+    if (container === null) {
+      warn('content', 'The file-content container was not found; using the overlay fallback');
+      frame.classList.add('ghpreview-frame-overlay');
+      document.body.appendChild(frame);
+      return { frame, hidden: null, created: true };
+    }
+
+    const body = expandToFileBody(container);
+    frame.classList.add('ghpreview-frame-inline');
+    body.style.display = 'none';
+    hiddenContainer = body;
+    body.parentElement.insertBefore(frame, body);
+    return { frame, hidden: body, created: true };
+  }
+
+  /**
+   * Expand the hidden range to cover the complete file-content region.
+   *
+   * The selector can match only the text area; **line-number columns are siblings**. Hiding
+   * only the text area leaves line numbers below the preview (see DOM-HOOKS.md).
+   *
+   * Do not use class names for expansion. Walk outward until the parent contains the
+   * Raw / Blame toolbar; that boundary separates content to hide from controls to keep.
+   */
+  function expandToFileBody(element) {
+    const toolbar = findFirst(SELECTORS.toolbar);
+    if (toolbar === null) {
+      // Do not expand when the boundary is unknown; hiding too much is worse.
+      return element;
+    }
+    let node = element;
+    while (
+      node.parentElement !== null &&
+      node.parentElement !== document.body &&
+      node.parentElement !== document.documentElement &&
+      !node.parentElement.contains(toolbar)
+    ) {
+      node = node.parentElement;
+    }
+    return node;
+  }
+
+  function removeFrame() {
+    const frame = document.getElementById(FRAME_ID);
+    if (frame !== null) {
+      frame.remove();
+    }
+    if (hiddenContainer !== null) {
+      hiddenContainer.style.display = '';
+      hiddenContainer = null;
+    }
+    // The next document may have a similar height. Reset the previous value so the first
+    // measurement is not suppressed by the change guard.
+    appliedHeight = 0;
+  }
+
+  /**
+   * Fold fetched HTML into one document without relative resource references.
+   *
+   * DOMParser avoids differences in attribute quoting, casing, and line breaks. String
+   * replacement would eventually miss a form. This document is detached, so nothing runs
+   * during parsing.
+   *
+   * @param load returns {text, dataUri} for a URL, or null when it cannot be loaded
+   */
+  async function inlineDocument(htmlText, base, load) {
+    const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+    const notes = [];
+
+    // A remaining <base> could redirect an unresolved reference unexpectedly.
+    doc.querySelectorAll('base').forEach(element => element.remove());
+
+    for (const rule of inline.RULES) {
+      const elements = Array.from(doc.querySelectorAll(rule.select));
+      for (const element of elements) {
+        await applyRule(element, rule, base, load, notes);
+      }
+    }
+
+    // Rewrite url() values in inline <style> elements too.
+    const styles = Array.from(doc.querySelectorAll('style'));
+    for (const style of styles) {
+      const rewritten = await inline.rewriteCssUrls(style.textContent, base, url =>
+        load(url).then(got => (got === null ? null : got.dataUri)),
+      );
+      style.textContent = rewritten.text;
+      notes.push(...rewritten.notes);
+    }
+
+    addHeightReporter(doc);
+
+    return { html: '<!doctype html>\n' + doc.documentElement.outerHTML, notes };
+  }
+
+  /*
+   * Add a height reporter for the parent page.
+   *
+   * A fixed iframe height creates a second scrollbar and makes the document feel like a
+   * window. Matching the document height lets the page's own scrollbar do the work.
+   *
+   * This is the only code injected into the document. It posts only to github.com, and
+   * preview.js verifies the sender window.
+   */
+  const HEIGHT_REPORTER = [
+    '(function(){',
+    '  function measure(){',
+    '    var d = document.documentElement;',
+    '    var b = document.body;',
+    '    return Math.max(',
+    '      d ? d.scrollHeight : 0, d ? d.offsetHeight : 0,',
+    '      b ? b.scrollHeight : 0, b ? b.offsetHeight : 0,',
+    '    );',
+    '  }',
+    '  function report(){',
+    '    parent.postMessage(',
+    '      { type: "ghpreview:height", height: measure() },',
+    '      "https://github.com",',
+    '    );',
+    '  }',
+    '  window.addEventListener("load", report);',
+    '  if (typeof ResizeObserver === "function") {',
+    '    new ResizeObserver(report).observe(document.documentElement);',
+    '    if (document.body) { new ResizeObserver(report).observe(document.body); }',
+    '  }',
+    '  // Fonts can change the height after the initial layout.',
+    '  if (document.fonts && document.fonts.ready) { document.fonts.ready.then(report); }',
+    '  // Recheck after delayed layout work; repeated measurements are harmless.',
+    '  [0, 250, 1000].forEach(function(wait){ setTimeout(report, wait); });',
+    '})();',
+  ].join('\n');
+
+  function addHeightReporter(doc) {
+    const script = doc.createElement('script');
+    script.textContent = HEIGHT_REPORTER;
+    (doc.body || doc.documentElement).appendChild(script);
+  }
+
+  /*
+   * Match the document height without imposing a maximum; the page handles scrolling.
+   *
+   * Add a small slack value. An exact fit can leave a few pixels of internal scroll space,
+   * causing small wheel movements to be consumed by the iframe instead of the page.
+   */
+  const SLACK_PX = 8;
+  let appliedHeight = 0;
+
+  function resizeFrame(height) {
+    const frame = document.getElementById(FRAME_ID);
+    if (frame === null || !Number.isFinite(height) || height <= 0) {
+      return;
+    }
+    if (frame.classList.contains('ghpreview-frame-overlay')) {
+      return;
+    }
+    /*
+     * Ignore measurements within the slack range. Otherwise a document using `height: 100%`
+     * could grow by the slack amount on every measure.
+     */
+    if (Math.abs(height - appliedHeight) <= SLACK_PX) {
+      return;
+    }
+    appliedHeight = Math.ceil(height) + SLACK_PX;
+    frame.style.height = appliedHeight + 'px';
+  }
+
+  async function applyRule(element, rule, base, load, notes) {
+    const value = element.getAttribute(rule.attribute);
+
+    if (rule.as === 'srcset') {
+      const rewritten = await inline.rewriteSrcset(value, base, url =>
+        load(url).then(got => (got === null ? null : got.dataUri)),
+      );
+      element.setAttribute(rule.attribute, rewritten.value);
+      notes.push(...rewritten.notes);
+      return;
+    }
+
+    const decided = inline.classify(value, base);
+    if (decided.kind === 'unsupported') {
+      notes.push(decided.reason);
+      return;
+    }
+    if (decided.kind !== 'inline') {
+      return;
+    }
+
+    const got = await load(decided.url);
+    if (got === null) {
+      notes.push('Could not load reference: ' + value);
+      return;
+    }
+
+    if (rule.as === 'css') {
+      const rewritten = await inline.rewriteCssUrls(got.text, decided.url, url =>
+        load(url).then(inner => (inner === null ? null : inner.dataUri)),
+      );
+      notes.push(...rewritten.notes);
+      const style = element.ownerDocument.createElement('style');
+      style.textContent = rewritten.text;
+      element.replaceWith(style);
+      return;
+    }
+
+    if (rule.as === 'js') {
+      const script = element.ownerDocument.createElement('script');
+      // Preserve execution attributes such as type and defer, but remove src.
+      Array.from(element.attributes).forEach(attribute => {
+        if (attribute.name !== 'src') {
+          script.setAttribute(attribute.name, attribute.value);
+        }
+      });
+      script.textContent = inline.escapeScriptText(got.text);
+      element.replaceWith(script);
+      return;
+    }
+
+    element.setAttribute(rule.attribute, got.dataUri);
+  }
+
+  global.GHPREVIEW.githubDom = {
+    SELECTORS,
+    insertPreviewLink,
+    removePreviewLink,
+    markPreviewSelected,
+    onLeavePreview,
+    ensureStyle,
+    mountFrame,
+    removeFrame,
+    resizeFrame,
+    inlineDocument,
+    warn,
+  };
+})(typeof window === 'undefined' ? globalThis : window);

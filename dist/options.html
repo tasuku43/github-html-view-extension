@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>HTML preview settings</title>
+<link rel="stylesheet" href="ui.css">
+<main class="ghpreview-options">
+  <h1>Repositories enabled for preview</h1>
+  <p>
+    Enter one exact <code>owner/name</code> entry per line. Text after <code>#</code> is a comment.
+    HTML files are rendered only for repositories listed here.
+  </p>
+  <p class="ghpreview-caution">
+    Adding a repository means that JavaScript inside its <code>.html</code> files may run
+    as soon as they are opened. This includes code written by anyone who can contribute
+    to that repository. The code runs outside the GitHub page and cannot access your
+    login information or GitHub DOM, but keep the list narrow.
+  </p>
+  <textarea id="entries" rows="12" spellcheck="false"
+            placeholder="example-owner/design-docs&#10;example-owner/handbook"></textarea>
+  <div class="ghpreview-actions">
+    <button id="save" type="button">Save</button>
+    <span id="status" role="status"></span>
+  </div>
+  <p class="ghpreview-note">
+    Wildcards such as <code>owner/*</code> are not accepted. Exact entries prevent
+    newly created repositories from becoming trusted without an explicit decision.
+  </p>
+</main>
+<script src="src/lib/allowlist.js"></script>
+<script src="options.js"></script>

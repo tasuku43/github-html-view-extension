@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "ghpreview",
+  "version": "0.1.0",
+  "description": "Preview HTML files from explicitly allowlisted GitHub repositories.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://github.com/*",
+    "https://objects.githubusercontent.com/*",
+    "https://raw.githubusercontent.com/*",
+    "https://media.githubusercontent.com/*"
+  ],
+  "background": {
+    "comment": "Fetches GitHub content because /raw/ redirects away from the page origin.",
+    "service_worker": "src/worker.js"
+  },
+  "content_scripts": [
+    {
+      "comment": "Do not intercept GitHub traffic or inject code into the page's MAIN world.",
+      "matches": ["https://github.com/*"],
+      "js": [
+        "src/lib/blob-url.js",
+        "src/lib/allowlist.js",
+        "src/lib/inline.js",
+        "src/github/dom.js",
+        "src/preview.js"
+      ],
+      "comment2": "Start early so the source is visible for less time while the preview is prepared.",
+      "run_at": "document_start"
+    }
+  ],
+  "options_page": "options.html",
+  "sandbox": {
+    "comment": "The only place where repository JavaScript may run; never grant allow-same-origin.",
+    "pages": ["sandbox.html"]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["sandbox.html", "sandbox.js", "ui.css"],
+      "matches": ["https://github.com/*"]
+    }
+  ]
+}
