@@ -10,11 +10,11 @@ The product name is intentionally provisional. No final brand name is part of th
 
 ## Technology and maintenance constraints
 
-- The extension is implemented in TypeScript. Runtime code, shared contracts, and tests must not regress to a pure JavaScript structure.
+- TypeScript is optional. The extension may remain JavaScript while the behavior and settings contract stabilize; introduce TypeScript only when it clearly reduces maintenance cost.
 - The extension targets Chrome Manifest V3, including a Service Worker and the declared MV3 sandbox boundary.
-- The existing bundling approach remains the source of truth. `dist/` is generated output and is never edited by hand.
-- The project does not introduce React or another UI framework merely to build the extension. Production UI uses typed DOM factories and ordinary CSS.
-- No new external runtime library is required for the product scope. Existing development dependencies should be reused unless a later decision explicitly justifies an addition.
+- The checked-in `dist/` runtime directory remains the source of truth while the baseline is being improved. A build pipeline is optional and must not be introduced merely to rearrange working files.
+- The project does not introduce React or another UI framework merely to build the extension. Production UI uses ordinary DOM factories and CSS.
+- No new external runtime library is required for the product scope. Development-only browser automation is acceptable when it provides real extension coverage; runtime behavior must remain dependency-light.
 - The design review surface follows a Storybook-style workflow: each important production state must be inspectable in isolation, using the same production DOM factories and styles. A framework-specific Storybook integration is optional; component reuse and repeatable visual review are mandatory.
 - The repository is maintained as a long-lived project. Clear boundaries, small changes, focused tests, and repeatable browser checks take priority over short-term rewrite speed.
 - New or changed user-facing copy, tests, comments, and documentation are written in English.
@@ -321,10 +321,14 @@ src/
 ```
 
 This is a separation of responsibility, not a requirement to create every file before the behavior is stable.
+The `.ts` suffixes in the example are illustrative; the boundaries matter more than a
+mandatory language migration.
 
 ### Core
 
-Pure TypeScript contracts and functions: GitHub URL parsing, settings normalization, repository matching, HTML validation, transformation, protocol messages, and safe diagnostics. Core code must not depend on Chrome APIs or GitHub DOM details.
+Pure platform-independent contracts and functions: GitHub URL parsing, settings
+normalization, repository matching, HTML validation, transformation, protocol messages, and
+safe diagnostics. Core code must not depend on Chrome APIs or GitHub DOM details.
 
 ### Content script
 
@@ -372,14 +376,16 @@ E2E assertions must prefer `data-preview-state` and `data-preview-error-code` ov
 
 ### Automated checks
 
-The repository gates are:
+The minimum repository gates are:
 
 ```text
-npm run typecheck
 npm test
-npm run build
+npm run e2e
 npm run check
 ```
+
+Typecheck and build commands are added only if a TypeScript or source-build workflow is
+adopted later.
 
 Tests must cover pure policy and URL behavior, settings and allowlist behavior, protocol validation, state projection, Worker failure propagation, stale operations, sandbox handshake ordering, recheck invalidation, and data-attribute updates.
 

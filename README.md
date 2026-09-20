@@ -5,8 +5,8 @@ directory was originally supplied as the working `ghpreview` baseline; the produ
 still provisional and will be decided separately.
 
 The first milestone is deliberately small: keep the working baseline loadable and
-reproducible before replacing any part of it. The TypeScript implementation, stronger
-observability, and the final settings experience will be introduced incrementally with a
+reproducible before replacing any part of it. Stronger observability, the final settings
+experience, and any future source/build tooling will be introduced incrementally with a
 working browser checkpoint after each change.
 
 ## Baseline behavior
@@ -46,3 +46,5 @@ The long-term contract is documented in [docs/specification.md](docs/specificati
 That document is the destination, not a request to rewrite the working baseline in one
 step. Future work should make one small change, run the tests, reload `dist/` in Chrome,
 and verify the relevant GitHub behavior before continuing.
+
+The implementation order is tracked in [docs/backlog/README.md](docs/backlog/README.md).
