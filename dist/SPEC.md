@@ -137,6 +137,10 @@ extension walks up to the outermost ancestor that does **not** contain the heade
 toolbar. The line-number gutter is a sibling of the text area, so hiding only the match
 would leave line numbers visible below the preview.
 
+If GitHub is still replacing the file body, mounting is deferred rather than using a
+full-page overlay. A later DOM mutation retries the placement once the file-content
+boundary is available.
+
 `sandbox.html` displays a loading line until content arrives, so the iframe itself is
 the placeholder.
 
@@ -194,6 +198,12 @@ Not handled: root-absolute paths, ES modules, dynamic `import()`, runtime `fetch
 `sandbox.html` and the document content become ready in either order, so both are
 awaited before the content is sent.
 
+The bundled bootstrap reports its startup separately from readiness. If the initial ready
+message is missed, the parent sends a `ghpreview:sandbox-ping` after iframe load and the
+bootstrap reports readiness again. The parent also removes an unexpected `srcdoc` attribute
+so the iframe cannot silently fall back to `about:srcdoc` instead of the declared entry
+point.
+
 | Direction | Identity check |
 | --- | --- |
 | github.com → sandbox | `event.source === window.parent` and `event.origin === 'https://github.com'` |
@@ -204,14 +214,27 @@ source check is meaningful in that direction.
 
 On receipt the sandbox calls `document.open()` / `write()` / `close()`.
 
+The sandbox also reports `render-started` and `render-ready`, then sends height
+notifications. Runtime failures are reduced to the safe `sandbox-runtime-error` code and
+correlated with the current session ID. The parent accepts only messages from the expected
+frame with the matching session ID.
+
+The active Preview surface exposes `data-preview-state`, `data-preview-error-code`,
+`data-preview-request-id`, and `data-preview-session-id`. The lifecycle states are `idle`,
+`detecting`, `checking-settings`, `fetching`, `validating`, `mounting`,
+`waiting-for-sandbox`, `rendering`, `waiting-for-height`, `ready`, `disabled`, `failed`,
+and `stale`.
+
 ### 4.6 Height
 
-A small reporter script is appended to the rendered document. It posts the document
-height to `https://github.com` on load, on `ResizeObserver` callbacks, once fonts are
-ready, and at 0 / 250 / 1000 ms.
+A small reporter script is placed in the rendered document before the document's body
+scripts. It posts the document height to `https://github.com` on load, on
+`ResizeObserver` callbacks, once fonts are ready, and at 0 / 250 / 1000 ms.
 
 The parent sets the iframe height to `ceil(height) + 8`. Reports differing from the
-applied height by 8 px or less are ignored.
+applied height by 8 px or less are ignored. After `render-ready`, the parent enters
+`waiting-for-height`; if no usable height arrives before the timeout, it fails with the
+`height-timeout` diagnostic code.
 
 ### 4.7 Navigation
 
@@ -229,15 +252,18 @@ dropped, and the inserted `Preview` item removed before re-evaluating the new pa
 
 | Failure | Behavior |
 | --- | --- |
-| File cannot be fetched | hidden region restored, source shown, warning logged |
+| File cannot be fetched | an inline Preview error surface is shown, Code and Blame remain available, warning logged |
 | Subresource cannot be fetched | reference left as written, warning logged |
 | Segmented control not found | `Preview` link placed next to `Raw`, warning logged |
 | Header toolbar not found | nothing inserted, warning logged |
-| File-content container not found | iframe rendered as a full-viewport overlay, warning logged |
+| File-content container not found | sandbox mounting is delayed until the file body appears, warning logged |
+| HTML policy violation | an inline Preview error surface is shown with detected issues |
+| Sandbox startup timeout | an inline Preview error surface is shown with `sandbox-timeout` |
+| Height notification timeout | an inline Preview error surface is shown with `height-timeout` |
 | Extension reloaded under an open tab | `chrome.*` calls fail once, then are not attempted again |
 
-All warnings go to the page console prefixed with `[ghpreview]`, and each distinct
-message is printed once.
+Structured lifecycle logs go to the page console prefixed with `[html-preview]`. DOM
+selector warnings keep the `[ghpreview]` prefix and are printed once per message.
 
 ---
 

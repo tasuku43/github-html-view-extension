@@ -17,13 +17,24 @@ origin` is intentionally absent from both the iframe and the sandbox policy.
 
 `manifest.json` lists `sandbox.html` in the MV3 sandbox section. The content script mounts
 that extension-owned page as the iframe entry point and sends the prepared HTML through
-`postMessage`. The sandbox sends `ghpreview:sandbox-ready` before it accepts one render
-message, then opens the document with `document.open()`, `document.write()`, and
-`document.close()` so classic inline scripts execute.
+`postMessage`. The sandbox announces `ghpreview:sandbox-bootstrap` and
+`ghpreview:sandbox-ready` before it accepts one render message. After iframe load, the
+parent can send `ghpreview:sandbox-ping` to request another ready signal. The sandbox then
+opens the document with `document.open()`, `document.write()`, and `document.close()` so
+classic inline scripts execute.
+
+The parent removes any unexpected `srcdoc` attribute before using the frame. `srcdoc` takes
+precedence over `src`, so leaving an empty attribute in place would load `about:srcdoc`
+instead of the bundled sandbox page.
 
 The parent validates `event.source === frame.contentWindow`. The sandbox validates both
 `event.source === window.parent` and `event.origin === 'https://github.com'`. The sandbox
 origin itself is opaque, so its origin string is not used as proof of identity.
+
+Each preview request has a generated request ID and each sandbox mount has a generated
+session ID. The IDs are attached to the Preview surface as `data-preview-request-id` and
+`data-preview-session-id`, and to lifecycle logs. They are correlation identifiers only;
+they never contain a URL, repository name, document text, or credential.
 
 ## Fetching and inlining
 
@@ -53,5 +64,8 @@ detached document before it reaches the sandbox.
 
 GitHub uses SPA-style DOM replacement. The baseline observes DOM mutations and compares the
 current URL rather than relying on undocumented transition event names. This is deliberately
-simple and is one of the first areas to receive stronger lifecycle observability in the
-future implementation.
+simple. Lifecycle state is exposed through `data-preview-state` on the active Preview
+surface (and on the page root during transitions). The state values include `idle`,
+`detecting`, `checking-settings`, `fetching`, `validating`, `mounting`,
+`waiting-for-sandbox`, `rendering`, `waiting-for-height`, `ready`, `disabled`, `failed`,
+and `stale`.

@@ -7,13 +7,113 @@
 (function initPreview(global) {
   'use strict';
 
-  const { blobUrl, allowlist, githubDom } = global.GHPREVIEW;
+  const { blobUrl, allowlist, githubDom, inline } = global.GHPREVIEW;
 
   const PREFIX = 'ghpreview:';
   const RENDER = PREFIX + 'render';
+  const RENDER_STARTED = PREFIX + 'render-started';
+  const RENDER_READY = PREFIX + 'render-ready';
+  const BOOTSTRAP = PREFIX + 'sandbox-bootstrap';
   const READY = PREFIX + 'sandbox-ready';
+  const PING = PREFIX + 'sandbox-ping';
   const HEIGHT = PREFIX + 'height';
+  const RUNTIME_ERROR = PREFIX + 'runtime-error';
   const ALLOWLIST_KEY = 'allowlist';
+
+  const STATES = new Set([
+    'idle',
+    'detecting',
+    'checking-settings',
+    'fetching',
+    'validating',
+    'mounting',
+    'waiting-for-sandbox',
+    'rendering',
+    'waiting-for-height',
+    'ready',
+    'disabled',
+    'failed',
+    'stale',
+  ]);
+
+  let idCounter = 0;
+  let previewState = 'idle';
+  let previewErrorCode = null;
+  let operation = null;
+
+  function createId(prefix) {
+    if (global.crypto && typeof global.crypto.randomUUID === 'function') {
+      return prefix + '-' + global.crypto.randomUUID();
+    }
+    idCounter += 1;
+    return prefix + '-' + Date.now().toString(36) + '-' + idCounter.toString(36);
+  }
+
+  function operationFor(href) {
+    if (operation !== null && operation.href === href) {
+      return operation;
+    }
+    operation = {
+      href,
+      requestId: createId('request'),
+      sessionId: null,
+      generation: operation === null ? 1 : operation.generation + 1,
+    };
+    return operation;
+  }
+
+  function isStale(current) {
+    if (current === operation && current !== null && current.href === location.href) {
+      return false;
+    }
+    emit('warn', 'stale-operation', 'preview', current, 'stale-operation', {
+      stage: 'async-boundary',
+    });
+    setState('stale', 'stale-operation', current);
+    return true;
+  }
+
+  function emit(level, event, phase, current, errorCode, detail) {
+    const payload = { event, phase };
+    const active = current || operation;
+    if (active && active.requestId) {
+      payload.requestId = active.requestId;
+    }
+    if (active && active.sessionId) {
+      payload.sessionId = active.sessionId;
+    }
+    if (errorCode) {
+      payload.errorCode = errorCode;
+    }
+    if (detail !== undefined) {
+      payload.detail = detail;
+    }
+    const message = '[html-preview] ' + JSON.stringify(payload);
+    const logger = console[level] || console.debug;
+    logger.call(console, message);
+  }
+
+  function debug(event, detail, current, errorCode) {
+    emit('debug', event, 'preview', current, errorCode, detail);
+  }
+
+  function setState(next, errorCode = null, current = operation) {
+    if (!STATES.has(next)) {
+      return;
+    }
+    const changed = previewState !== next || previewErrorCode !== errorCode;
+    previewState = next;
+    previewErrorCode = errorCode;
+    githubDom.setPreviewMetadata({
+      state: next,
+      errorCode,
+      requestId: current && current.requestId,
+      sessionId: current && current.sessionId,
+    });
+    if (changed) {
+      debug('state-changed', { state: next }, current, errorCode);
+    }
+  }
 
   // After an extension reload, an existing tab's content script can no longer use the
   // chrome API. After one failure, stop touching the extension API.
@@ -41,24 +141,56 @@
     });
   }
 
-  function ask(message) {
+  function ask(message, current) {
     return new Promise(resolve => {
       if (!extensionAlive) {
-        resolve(null);
+        resolve({ ok: false, errorCode: 'extension-unavailable' });
         return;
       }
       try {
-        chrome.runtime.sendMessage(message, reply => {
-          try {
-            resolve(chrome.runtime.lastError ? null : reply);
-          } catch (error) {
-            extensionAlive = false;
-            resolve(null);
-          }
-        });
+        chrome.runtime.sendMessage(
+          { ...message, requestId: current && current.requestId },
+          reply => {
+            try {
+              const runtimeError = chrome.runtime.lastError;
+              if (runtimeError) {
+                emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+                  source: 'runtime-message',
+                });
+                resolve({ ok: false, errorCode: 'runtime-last-error' });
+                return;
+              }
+              if (!reply || typeof reply !== 'object') {
+                emit('warn', 'response-rejected', 'fetching', current, 'invalid-response', {
+                  source: 'runtime-message',
+                });
+                resolve({ ok: false, errorCode: 'invalid-response' });
+                return;
+              }
+              if (current && current.requestId && reply.requestId !== current.requestId) {
+                emit('warn', 'response-rejected', 'fetching', current, 'invalid-response', {
+                  source: 'runtime-message',
+                  reason: 'request-id-mismatch',
+                });
+                resolve({ ok: false, errorCode: 'invalid-response' });
+                return;
+              }
+              resolve(reply);
+            } catch (error) {
+              extensionAlive = false;
+              emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+                source: 'runtime-message',
+              });
+              resolve({ ok: false, errorCode: 'runtime-last-error' });
+            }
+          },
+        );
       } catch (error) {
         extensionAlive = false;
-        resolve(null);
+        emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+          source: 'runtime-message',
+        });
+        resolve({ ok: false, errorCode: 'runtime-last-error' });
       }
     });
   }
@@ -71,21 +203,32 @@
    * (see MODEL.md).
    */
   const cache = new Map();
+  const loadFailures = new Map();
 
-  function load(url) {
+  function load(url, current, kind = 'resource') {
     if (cache.has(url)) {
       return cache.get(url);
     }
-    const pending = ask({ type: PREFIX + 'fetch', url }).then(reply => {
-      if (reply === null || !reply.ok) {
+    debug('request-started', { kind }, current);
+    const pending = Promise.resolve()
+      .then(() => {
+        debug('request-sent', { kind }, current);
+        return ask({ type: PREFIX + 'fetch', url }, current);
+      })
+      .then(reply => {
+      if (!reply || !reply.ok) {
+        const errorCode = reply && reply.errorCode ? reply.errorCode : 'fetch-failed';
+        loadFailures.set(url, errorCode);
+        emit('warn', 'response-rejected', 'fetching', current, errorCode, { kind });
         return null;
       }
+      debug('response-received', { kind, contentType: reply.contentType || 'unknown' }, current);
       return {
         text: reply.text,
         dataUri: global.GHPREVIEW.inline.dataUri(reply.contentType, reply.base64),
         contentType: reply.contentType,
       };
-    });
+      });
     cache.set(url, pending);
     return pending;
   }
@@ -107,20 +250,47 @@
    * Reading the allowlist is asynchronous, so callers can reuse the result while the page
    * remains unchanged.
    */
-  async function isEnabled(parsed) {
+  async function isEnabled(parsed, current) {
     const entries = allowlist.parseAllowlist(await storageGet(ALLOWLIST_KEY));
-    return allowlist.isAllowed(blobUrl.repoKey(parsed), entries);
+    const allowed = allowlist.isAllowed(blobUrl.repoKey(parsed), entries);
+    debug('settings-loaded', { allowlistEntryCount: entries.length }, current);
+    if (!allowed) {
+      emit('warn', 'repository-not-allowed', 'checking-settings', current, 'repository-not-allowed');
+    }
+    return allowed;
+  }
+
+  function abandonOperation(reason) {
+    const previous = operation;
+    if (previous !== null) {
+      emit('debug', 'stale-operation', 'preview', previous, 'stale-operation', { stage: reason });
+      setState('stale', 'stale-operation', previous);
+      unmount(reason, previous);
+    }
+    operation = null;
+    rendered = null;
   }
 
   async function apply() {
+    setState('detecting');
     // Accept Blame too. It shows the same file, so Preview remains available.
     const file = blobUrl.parseFileUrl(location.href);
     if (file === null || !blobUrl.isHtmlPath(file.refAndPath)) {
-      teardown();
+      teardown('idle');
       return;
     }
-    if (!(await isEnabled(file))) {
-      teardown();
+    if (operation !== null && operation.href !== location.href) {
+      abandonOperation('navigation');
+    }
+    const current = operationFor(location.href);
+    debug('page-detected', { view: file.view, fileKind: 'html' }, current);
+    setState('checking-settings', null, current);
+    if (!(await isEnabled(file, current))) {
+      emit('warn', 'preview-disabled', 'checking-settings', current, 'repository-not-allowed');
+      teardown('disabled', current);
+      return;
+    }
+    if (isStale(current)) {
       return;
     }
 
@@ -152,18 +322,28 @@
     githubDom.markPreviewSelected(wantsPreview);
 
     if (!wantsPreview) {
-      unmount();
+      unmount('view-change', current);
+      setState('idle', null, current);
+      return;
+    }
+    // A policy or fetch failure owns the Preview surface until the user explicitly
+    // chooses Recheck. MutationObserver callbacks must not replace that surface with a
+    // second, permanently loading sandbox frame.
+    if (githubDom.hasError()) {
+      setState('failed', githubDom.getErrorCode() || previewErrorCode || 'preview-failed', current);
+      githubDom.reconcileError();
       return;
     }
     // Mount before fetching. If the container is not available yet, the call is a no-op
     // and the mutation observer will retry when GitHub inserts it.
-    openFrame(chrome.runtime.getURL('sandbox.html'));
+    setState('mounting', null, current);
+    openFrame(chrome.runtime.getURL('sandbox.html'), file, current);
 
     if (rendered === location.href) {
       return;
     }
     rendered = location.href;
-    await render(file);
+    await render(file, current);
   }
 
   /*
@@ -190,45 +370,136 @@
    * cleared during a transition, leaving the previous preview mounted. Always ask the DOM
    * layer to remove it; redundant removal is harmless.
    */
-  function unmount() {
+  function unmount(reason = 'preview-destroyed', current = operation) {
+    const hadSurface = handover.frame !== null || githubDom.hasError();
+    if (hadSurface) {
+      debug('preview-destroyed', { reason }, current);
+    }
+    if (reason === 'view-change' && current !== null) {
+      emit('debug', 'stale-operation', 'preview', current, 'stale-operation', {
+        stage: 'view-change',
+      });
+      setState('stale', 'stale-operation', current);
+    }
+    clearSandboxTimer();
     rendered = null;
     handover.frame = null;
     handover.ready = false;
     handover.html = null;
+    handover.sessionId = null;
     dropFrameListeners();
     githubDom.removeFrame();
   }
 
-  function teardown() {
-    unmount();
+  function teardown(nextState = 'idle', current = operation) {
+    unmount('teardown', current);
     githubDom.removePreviewLink();
+    setState(nextState, nextState === 'disabled' ? 'repository-not-allowed' : null, current);
   }
 
-  async function render(parsed) {
-    const source = await load(blobUrl.rawUrl(parsed));
+  function recheck(parsed, current = operation) {
+    cache.clear();
+    loadFailures.clear();
+    rendered = null;
+    debug('recheck-started', { cache: 'cleared' }, current);
+    unmount('recheck', current);
+    operation = null;
+    apply();
+  }
+
+  async function render(parsed, current) {
+    setState('fetching', null, current);
+    const sourceUrl = blobUrl.rawUrl(parsed);
+    const source = await load(sourceUrl, current, 'source');
+    if (isStale(current)) {
+      return;
+    }
     if (source === null) {
-      githubDom.warn('fetch-source', 'Could not fetch file: ' + blobUrl.rawUrl(parsed));
-      // Do not leave the source hidden when it cannot be loaded.
-      unmount();
+      const errorCode = loadFailures.get(sourceUrl) || 'source-fetch-failed';
+      emit('warn', 'fetch-failed', 'fetching', current, errorCode, { kind: 'source' });
+      failPreview({
+        code: errorCode,
+        reason: 'GitHub did not return the file for Preview.',
+        issues: [{ message: 'The source file could not be retrieved.' }],
+        onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+        onRecheck: () => recheck(parsed, current),
+      }, current);
+      return;
+    }
+
+    debug('source-loaded', {
+      textLength: typeof source.text === 'string' ? source.text.length : null,
+    }, current);
+
+    // Reject unsupported documents before any source is sent to the sandbox. This keeps
+    // policy failures deterministic instead of turning them into blank documents or
+    // browser-level CSP/runtime errors.
+    setState('validating', null, current);
+    debug('validation-started', undefined, current);
+    const validation = inline.validateDocument(source.text);
+    debug('validation-completed', {
+      valid: validation.valid,
+      issueCodes: validation.issues.map(issue => issue.code),
+    }, current);
+    if (!validation.valid) {
+      emit('warn', 'validation-failed', 'validating', current, 'html-policy-violation', {
+        issueCount: validation.issues.length,
+      });
+      if (rendered !== location.href || isStale(current)) {
+        debug('stale-operation', { stage: 'validation-result' }, current, 'stale-operation');
+        return;
+      }
+      failPreview({
+        code: 'html-policy-violation',
+        reason: 'This file cannot be previewed because it is not self-contained.',
+        issues: validation.issues,
+        onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+        onRecheck: () => recheck(parsed, current),
+      }, current);
       return;
     }
 
     const built = await githubDom.inlineDocument(
       source.text,
       blobUrl.resolutionBase(parsed),
-      load,
+      (url) => load(url, current),
+      current.sessionId,
     );
+    debug('document-built', {
+      htmlLength: built.html.length,
+      noteCount: built.notes.length,
+    }, current);
     // Report each note once by content. An index-based key could hide a different note
     // when a new document uses the same position.
-    built.notes.forEach(note => githubDom.warn('note:' + note, note));
+    if (built.notes.length > 0) {
+      const noteKinds = new Set(
+        built.notes.map(note => {
+          if (note.startsWith('Could not load reference:')) {
+            return 'reference-load-failed';
+          }
+          if (note.startsWith('Could not fetch file:')) {
+            return 'source-fetch-failed';
+          }
+          return 'inline-warning';
+        }),
+      );
+      noteKinds.forEach(kind =>
+        githubDom.warn(
+          'note:' + kind,
+          'Inline document processing reported a ' + kind + ' condition',
+        ),
+      );
+    }
 
     // Do not render if navigation happened while the document was being prepared.
-    if (rendered !== location.href) {
+    if (rendered !== location.href || isStale(current)) {
+      debug('stale-operation', { stage: 'document-built' }, current, 'stale-operation');
       return;
     }
 
     handover.html = built.html;
-    openFrame(chrome.runtime.getURL('sandbox.html'));
+    setState('rendering', null, current);
+    openFrame(chrome.runtime.getURL('sandbox.html'), parsed, current);
     flush();
   }
 
@@ -238,16 +509,149 @@
    * The iframe is mounted first, so sandbox-ready can arrive before the document. Send
    * only after both sides are ready.
    */
-  const handover = { frame: null, ready: false, html: null };
+  const handover = { frame: null, ready: false, html: null, sessionId: null };
+  const SANDBOX_TIMEOUT_MS = 4000;
+  const HEIGHT_TIMEOUT_MS = 4000;
+  let sandboxTimer = null;
+  let heightTimer = null;
 
-  function openFrame(sandboxUrl) {
-    const mounted = githubDom.mountFrame(sandboxUrl);
-    if (!mounted.created) {
+  function clearSandboxTimer() {
+    if (sandboxTimer !== null) {
+      clearTimeout(sandboxTimer);
+      sandboxTimer = null;
+    }
+    if (heightTimer !== null) {
+      clearTimeout(heightTimer);
+      heightTimer = null;
+    }
+  }
+
+  function scheduleHeightTimeout(parsed, current) {
+    if (heightTimer !== null) {
+      clearTimeout(heightTimer);
+    }
+    heightTimer = setTimeout(() => {
+      heightTimer = null;
+      if (
+        operation !== current ||
+        handover.frame === null ||
+        handover.sessionId !== current.sessionId ||
+        previewState !== 'waiting-for-height' ||
+        githubDom.hasError()
+      ) {
+        return;
+      }
+      emit('error', 'height-timeout', 'rendering', current, 'height-timeout');
+      failPreview(
+        {
+          code: 'height-timeout',
+          reason: 'The preview rendered but did not report its layout.',
+          issues: [{ message: 'The isolated document did not provide a usable height.' }],
+          onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+          onRecheck: () => recheck(parsed, current),
+        },
+        current,
+      );
+    }, HEIGHT_TIMEOUT_MS);
+  }
+
+  function failPreview(details, current = operation) {
+    clearSandboxTimer();
+    const errorCode = details.code || 'preview-failed';
+    emit('error', 'preview-failed', 'preview', current, errorCode);
+    setState('failed', errorCode, current);
+    githubDom.showError({
+      ...details,
+      state: 'failed',
+      code: errorCode,
+      requestId: current && current.requestId,
+      sessionId: current && current.sessionId,
+      errorCode,
+    });
+  }
+
+  function scheduleSandboxTimeout(frame, parsed, current) {
+    clearSandboxTimer();
+    sandboxTimer = setTimeout(() => {
+      sandboxTimer = null;
+      if (handover.frame !== frame || handover.ready || githubDom.hasError() || operation !== current) {
+        return;
+      }
+
+      emit('error', 'sandbox-timeout', 'sandbox', current, 'sandbox-timeout');
+      dropFrameListeners();
+      handover.frame = null;
+      handover.ready = false;
+      handover.html = null;
+      handover.sessionId = null;
+      failPreview({
+        code: 'sandbox-timeout',
+        reason: 'The preview sandbox did not start.',
+        issues: [{ message: 'The isolated preview surface did not respond.' }],
+        onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+        onRecheck: () => recheck(parsed, current),
+      }, current);
+    }, SANDBOX_TIMEOUT_MS);
+  }
+
+  function openFrame(sandboxUrl, parsed, current) {
+    if (current.sessionId === null) {
+      current.sessionId = createId('session');
+    }
+    const entry = new URL(sandboxUrl);
+    entry.searchParams.set('session', current.sessionId);
+    let prepared = false;
+    const prepare = (frame, created = false) => {
+      if (handover.frame === frame) {
+        prepared = true;
+        return;
+      }
+      handover.frame = frame;
+      handover.ready = false;
+      handover.sessionId = current.sessionId;
+      listen(frame);
+      setState('waiting-for-sandbox', null, current);
+      debug('frame-mounted', { created }, current);
+      frame.addEventListener(
+        'load',
+        () => {
+          if (handover.frame !== frame || operation !== current) {
+            emit('debug', 'stale-operation', 'sandbox', current, 'stale-operation', {
+              stage: 'sandbox-load',
+            });
+            return;
+          }
+          debug('sandbox-document-loaded', { ready: handover.ready }, current);
+          if (handover.ready) {
+            return;
+          }
+          // Ask the bundled bootstrap to repeat its ready signal. This makes the
+          // handshake recoverable if navigation or a stale frame consumed the first one.
+          try {
+            frame.contentWindow.postMessage({ type: PING, sessionId: current.sessionId }, '*');
+            debug('sandbox-ping-sent', undefined, current);
+          } catch (error) {
+            emit('warn', 'sandbox-ping-failed', 'sandbox', current, 'sandbox-communication-failed');
+          }
+        },
+      );
+      prepared = true;
+      debug('sandbox-navigation-started', undefined, current);
+      scheduleSandboxTimeout(frame, parsed, current);
+    };
+    const mounted = githubDom.mountFrame(entry.href, prepare);
+    if (mounted.frame === null) {
       return;
     }
-    handover.frame = mounted.frame;
-    handover.ready = false;
-    listen(mounted.frame);
+    if (mounted.entryRepaired) {
+      debug('sandbox-entry-repaired', { entry: 'bundled-sandbox' }, current);
+    }
+    if (handover.frame === mounted.frame) {
+      return;
+    }
+    if (!prepared) {
+      prepare(mounted.frame, mounted.created);
+    }
   }
 
   function flush() {
@@ -256,7 +660,12 @@
     }
     const html = handover.html;
     handover.html = null;
-    handover.frame.contentWindow.postMessage({ type: RENDER, html }, '*');
+    setState('rendering', null, operation);
+    debug('render-sent', { htmlLength: html.length }, operation);
+    handover.frame.contentWindow.postMessage(
+      { type: RENDER, html, sessionId: handover.sessionId },
+      '*',
+    );
   }
 
   /**
@@ -267,20 +676,107 @@
    */
   function listen(frame) {
     function onMessage(event) {
-      if (event.source !== frame.contentWindow) {
+      const sourceMatches = event.source === frame.contentWindow;
+      const data = event.data;
+      const messageKind =
+        data && data.type === BOOTSTRAP
+          ? 'sandbox-bootstrap'
+          : data && data.type === READY
+            ? 'sandbox-ready'
+            : data && data.type === HEIGHT
+              ? 'height'
+              : data && data.type === RENDER_STARTED
+                ? 'render-started'
+                : data && data.type === RENDER_READY
+                  ? 'render-ready'
+                  : data && data.type === RUNTIME_ERROR
+                    ? 'runtime-error'
+                    : 'other';
+      debug(
+        'sandbox-message-received',
+        {
+          type: messageKind,
+          sourceMatches,
+          origin: event.origin === 'null' ? 'opaque' : 'other',
+        },
+        operation,
+      );
+      if (!sourceMatches) {
+        debug('sandbox-message-rejected', { reason: 'source-mismatch' }, operation);
         return;
       }
-      if (!event.data) {
+      if (handover.frame !== frame || operation === null) {
+        emit('debug', 'stale-operation', 'sandbox', operation, 'stale-operation', {
+          stage: 'sandbox-message',
+        });
         return;
       }
-      if (event.data.type === READY) {
+      if (!data) {
+        debug('sandbox-message-rejected', { reason: 'missing-data' }, operation);
+        return;
+      }
+      if (event.origin !== 'null') {
+        debug('sandbox-message-rejected', { reason: 'origin-mismatch' }, operation);
+        return;
+      }
+      if (data.sessionId !== handover.sessionId) {
+        emit('debug', 'stale-operation', 'sandbox', operation, 'stale-operation', {
+          stage: 'sandbox-session',
+        });
+        return;
+      }
+      if (data.type === READY) {
+        clearSandboxTimer();
+        debug('sandbox-ready', undefined, operation);
         handover.ready = true;
         flush();
         return;
       }
+      if (data.type === BOOTSTRAP) {
+        debug('sandbox-bootstrap-received', undefined, operation);
+        return;
+      }
+      if (data.type === RENDER_STARTED) {
+        setState('rendering', null, operation);
+        debug('render-started', undefined, operation);
+        return;
+      }
+      if (data.type === RENDER_READY) {
+        setState('waiting-for-height', null, operation);
+        debug('render-ready', undefined, operation);
+        scheduleHeightTimeout(blobUrl.parseFileUrl(location.href), operation);
+        return;
+      }
+      if (data.type === RUNTIME_ERROR) {
+        emit('error', 'runtime-error', 'sandbox', operation, 'sandbox-runtime-error', {
+          source: 'rendered-document',
+        });
+        failPreview(
+          {
+            code: 'sandbox-runtime-error',
+            reason: 'The preview ran into a runtime error.',
+            issues: [{ message: 'The isolated document reported a runtime error.' }],
+            onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+            onRecheck: () => recheck(blobUrl.parseFileUrl(location.href), operation),
+          },
+          operation,
+        );
+        return;
+      }
       // Resize to the document height so the iframe does not create a second scrollbar.
-      if (event.data.type === HEIGHT) {
-        githubDom.resizeFrame(event.data.height);
+      if (data.type === HEIGHT) {
+        const validHeight = Number.isFinite(data.height) && data.height > 0;
+        debug('height-received', { valid: validHeight }, operation);
+        if (!validHeight) {
+          emit('warn', 'response-rejected', 'waiting-for-height', operation, 'invalid-height');
+          return;
+        }
+        if (heightTimer !== null) {
+          clearTimeout(heightTimer);
+          heightTimer = null;
+        }
+        githubDom.resizeFrame(data.height);
+        setState('ready', null, operation);
       }
     }
     window.addEventListener('message', onMessage);
@@ -314,8 +810,9 @@
       if (location.href !== seen) {
         seen = location.href;
         // Clear the previous page before applying the new one, including restoring hidden
-        // source content.
-        unmount();
+        // source content. Record the abandoned async operation instead of letting it
+        // silently mutate the new page.
+        abandonOperation('navigation');
         githubDom.removePreviewLink();
       }
       apply();
@@ -350,8 +847,9 @@
     ) {
       return;
     }
-    if (await isEnabled(parsed)) {
-      load(blobUrl.rawUrl(parsed));
+    const current = operationFor(location.href);
+    if (await isEnabled(parsed, current)) {
+      load(blobUrl.rawUrl(parsed), current, 'source');
     }
   })();
 

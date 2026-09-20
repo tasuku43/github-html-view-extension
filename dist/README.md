@@ -27,6 +27,33 @@ Markdown and GitHub hosts other than `github.com` are not supported.
 The empty allowlist enables nothing. Wildcards such as `owner/*` are rejected. Matching
 ignores letter case but requires every other character to match exactly.
 
+## Diagnose a stalled preview
+
+Open the GitHub page's DevTools console and filter for `[html-preview]`. Lifecycle entries
+are structured JSON, so the `event`, `phase`, `requestId`, `sessionId`, and `errorCode`
+fields can be followed without exposing the HTML source or repository details.
+
+The current state is also available from the page DOM:
+
+```js
+document.documentElement.dataset.previewState
+document.documentElement.dataset.previewErrorCode
+document.documentElement.dataset.previewRequestId
+document.documentElement.dataset.previewSessionId
+```
+
+The same `data-preview-*` attributes are copied to `#ghpreview-frame` or
+`#ghpreview-error` when that surface exists. Useful checkpoints are:
+
+- `waiting-for-sandbox`: the bundled iframe is mounted, but the matching sandbox handshake
+  has not completed.
+- `rendering`: the parent sent the prepared document; look for `render-started` next.
+- `waiting-for-height`: the sandbox finished rendering, but the parent is still waiting for
+  a usable height notification.
+- `failed`: inspect `data-preview-error-code` and the matching `preview-failed` entry.
+
+`Recheck` clears the in-memory response cache and starts a fresh Worker request.
+
 ## Security notes
 
 Adding a repository allows JavaScript from its HTML files to run when previewed. The code

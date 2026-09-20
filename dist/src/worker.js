@@ -28,18 +28,23 @@ function toBase64(buffer) {
 }
 
 async function take(url) {
-  const response = await fetch(url, {
-    credentials: 'include',
-    redirect: 'follow',
-    cache: 'no-cache',
-  });
+  let response;
+  try {
+    response = await fetch(url, {
+      credentials: 'include',
+      redirect: 'follow',
+      cache: 'no-cache',
+    });
+  } catch (error) {
+    return { ok: false, status: 0, errorCode: 'fetch-failed' };
+  }
   if (!response.ok) {
-    return { ok: false, status: response.status };
+    return { ok: false, status: response.status, errorCode: 'http-error' };
   }
 
   const buffer = await response.arrayBuffer();
   if (buffer.byteLength > LIMIT_BYTES) {
-    return { ok: false, status: 0, reason: 'File is too large: ' + buffer.byteLength + ' bytes' };
+    return { ok: false, status: 0, errorCode: 'payload-too-large' };
   }
 
   const contentType = (response.headers.get('content-type') || '').split(';')[0].trim();
@@ -57,19 +62,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   // Only a content script running on github.com may make this request.
   if (!sender.url || !sender.url.startsWith('https://github.com/')) {
-    sendResponse({ ok: false, status: 0, reason: 'Sender is not github.com' });
+    sendResponse({
+      ok: false,
+      status: 0,
+      errorCode: 'invalid-sender',
+      requestId: message.requestId,
+    });
     return false;
   }
   // Restrict fetch targets to github.com so the extension cannot become an arbitrary
   // URL reader.
   if (typeof message.url !== 'string' || !message.url.startsWith('https://github.com/')) {
-    sendResponse({ ok: false, status: 0, reason: 'Target is not github.com' });
+    sendResponse({
+      ok: false,
+      status: 0,
+      errorCode: 'invalid-target',
+      requestId: message.requestId,
+    });
     return false;
   }
 
   take(message.url)
-    .then(sendResponse)
-    .catch(error => sendResponse({ ok: false, status: 0, reason: String(error) }));
+    .then(result => sendResponse({ ...result, requestId: message.requestId }))
+    .catch(error =>
+      sendResponse({
+        ok: false,
+        status: 0,
+        errorCode: 'fetch-failed',
+        requestId: message.requestId,
+      }),
+    );
 
   // Keep the message channel open for the asynchronous response.
   return true;
