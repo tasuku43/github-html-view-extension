@@ -19,6 +19,7 @@ const EXTENSION_DIR = process.env.GHPREVIEW_EXTENSION_DIR || join(ROOT, 'dist');
 const TARGET_URL = process.env.GHPREVIEW_E2E_URL;
 const EXPECTED_STATE = process.env.GHPREVIEW_E2E_EXPECT_STATE || '';
 const EXPECTED_ERROR_CODE = process.env.GHPREVIEW_E2E_EXPECT_ERROR_CODE || '';
+const EXPECT_NO_PREVIEW = process.env.GHPREVIEW_E2E_EXPECT_NO_PREVIEW === '1';
 const RUN_NAVIGATION = process.env.GHPREVIEW_E2E_NAVIGATION !== '0';
 const HEADLESS = process.env.GHPREVIEW_E2E_HEADLESS === '1';
 const DEBUG = process.env.GHPREVIEW_E2E_DEBUG === '1';
@@ -352,26 +353,42 @@ try {
   const worker = await findExtensionWorker(context);
   await configureSettingsThroughPopup(context, worker);
   await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
-  await waitForPreviewControl(page);
 
-  const initial = await waitForTerminalState(page);
-  assertMetadata(initial);
-  console.log(JSON.stringify({ step: 'terminal', ...initial }));
-  if (EXPECTED_STATE) {
-    assert(initial.state === EXPECTED_STATE, 'Expected state ' + EXPECTED_STATE + ', got ' + initial.state + '.');
-  }
-  if (EXPECTED_ERROR_CODE) {
-    assert(
-      initial.errorCode === EXPECTED_ERROR_CODE,
-      'Expected error code ' + EXPECTED_ERROR_CODE + ', got ' + initial.errorCode + '.',
-    );
-  }
+  if (EXPECT_NO_PREVIEW) {
+    await page.locator('[data-testid="error-404-description"]').waitFor({
+      state: 'attached',
+      timeout: TIMEOUT,
+    });
+    const missingFile = await waitFor('Preview to remain absent on a missing GitHub file', async () => {
+      const snapshot = await inspect(page);
+      return snapshot.previewAvailable || snapshot.hasError || snapshot.state !== 'idle' ? false : snapshot;
+    });
+    assert(!missingFile.previewAvailable, 'Preview control was injected into a missing GitHub file page.');
+    assert(!missingFile.hasError, 'Preview error surface was injected into a missing GitHub file page.');
+    console.log(JSON.stringify({ step: 'missing-file', ...missingFile }));
+    console.log('E2E passed.');
+  } else {
+    await waitForPreviewControl(page);
 
-  if (RUN_NAVIGATION) {
-    await runNavigationContract(page);
-  }
+    const initial = await waitForTerminalState(page);
+    assertMetadata(initial);
+    console.log(JSON.stringify({ step: 'terminal', ...initial }));
+    if (EXPECTED_STATE) {
+      assert(initial.state === EXPECTED_STATE, 'Expected state ' + EXPECTED_STATE + ', got ' + initial.state + '.');
+    }
+    if (EXPECTED_ERROR_CODE) {
+      assert(
+        initial.errorCode === EXPECTED_ERROR_CODE,
+        'Expected error code ' + EXPECTED_ERROR_CODE + ', got ' + initial.errorCode + '.',
+      );
+    }
 
-  console.log('E2E passed.');
+    if (RUN_NAVIGATION) {
+      await runNavigationContract(page);
+    }
+
+    console.log('E2E passed.');
+  }
 } catch (error) {
   console.error(error instanceof Error ? error.stack : error);
   const recentLogs = logs.slice(-20);

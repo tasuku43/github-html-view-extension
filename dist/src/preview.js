@@ -257,6 +257,13 @@
     rendered = null;
   }
 
+  function rejectMissingFilePage() {
+    if (operation !== null) {
+      abandonOperation('github-file-not-found');
+    }
+    teardown('idle');
+  }
+
   async function apply() {
     setState('detecting');
     // Accept Blame too. It shows the same file, so Preview remains available.
@@ -267,6 +274,11 @@
     }
     if (operation !== null && operation.href !== location.href) {
       abandonOperation('navigation');
+    }
+    if (githubDom.isMissingFilePage()) {
+      debug('page-rejected', { reason: 'github-file-not-found' });
+      rejectMissingFilePage();
+      return;
     }
     const current = operationFor(location.href);
     debug('page-detected', { view: file.view, fileKind: 'html' }, current);
@@ -785,6 +797,9 @@
     if (file === null || !blobUrl.isHtmlPath(file.refAndPath)) {
       return false;
     }
+    if (githubDom.isMissingFilePage()) {
+      return false;
+    }
     // Settings are still being read or a disabled page is already settled. Re-entering
     // apply here would create concurrent operations while GitHub is rendering its shell.
     if (previewState === 'detecting' || previewState === 'checking-settings' || previewState === 'disabled') {
@@ -824,6 +839,13 @@
         abandonOperation('navigation');
         githubDom.removePreviewLink();
       }
+      if (githubDom.isMissingFilePage()) {
+        if (operation !== null || githubDom.hasPreviewLink() || githubDom.hasFrame() || githubDom.hasError()) {
+          debug('page-rejected', { reason: 'github-file-not-found' });
+          rejectMissingFilePage();
+        }
+        return;
+      }
       if (changed || shouldReapplyAfterMutation()) {
         apply();
       }
@@ -854,7 +876,8 @@
     if (
       parsed === null ||
       !blobUrl.isHtmlPath(parsed.refAndPath) ||
-      !blobUrl.shouldPreview(location.href)
+      !blobUrl.shouldPreview(location.href) ||
+      githubDom.isMissingFilePage()
     ) {
       return;
     }

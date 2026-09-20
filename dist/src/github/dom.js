@@ -66,6 +66,20 @@
     return null;
   }
 
+  /**
+   * Return true when GitHub has rendered its explicit missing-file response.
+   *
+   * A URL can still look like an HTML Blob URL after GitHub returns a 404. Do not let
+   * the extension turn that error page into a Preview surface. Prefer GitHub's semantic
+   * marker and keep the title as a fallback for server-rendered transitions.
+   */
+  function isMissingFilePage() {
+    if (document.querySelector('[data-testid="error-404-description"]') !== null) {
+      return true;
+    }
+    return /^File not found\b/i.test((document.title || '').trim());
+  }
+
   // Mark inserted elements with an attribute rather than an id. The marker belongs to the
   // cloned item in the view switch and to the link itself in the toolbar fallback.
   const LINK_MARK = 'data-ghpreview-link';
@@ -973,6 +987,7 @@
 
   global.GHPREVIEW.githubDom = {
     SELECTORS,
+    isMissingFilePage,
     insertPreviewLink,
     removePreviewLink,
     markPreviewSelected,
