@@ -104,19 +104,39 @@ async function findExtensionWorker(context) {
   });
 }
 
-async function configureAllowlist(worker) {
-  await worker.evaluate(entry => {
-    return new Promise((resolve, reject) => {
-      chrome.storage.local.set({ allowlist: entry }, () => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          reject(new Error(error.message || 'Could not configure extension storage.'));
-          return;
-        }
-        resolve();
-      });
-    });
-  }, repository);
+async function configureSettingsThroughPopup(context, worker) {
+  const extensionId = new URL(worker.url()).hostname;
+  const popup = await context.newPage();
+  await popup.goto(`chrome-extension://${extensionId}/popup.html`, {
+    waitUntil: 'domcontentloaded',
+    timeout: TIMEOUT,
+  });
+  await popup.locator('[data-settings-surface][data-settings-state="ready"]').waitFor({
+    state: 'attached',
+    timeout: TIMEOUT,
+  });
+
+  const firstRun = await popup.evaluate(() => ({
+    previewEnabled: document.querySelector('#preview-enabled').checked,
+    capabilityDisabled: document.querySelector('#capability-javascript').disabled,
+    repositoryCount: document.querySelector('#repository-list').childElementCount,
+  }));
+  assert(!firstRun.previewEnabled, 'Preview should be off on a fresh profile.');
+  assert(firstRun.capabilityDisabled, 'Capabilities should be disabled until Preview is enabled.');
+  assert(firstRun.repositoryCount === 0, 'A fresh profile should have no repositories.');
+
+  await popup.locator('#repository-input').fill(repository);
+  await popup.locator('.add-button').click();
+  await popup.locator(`[data-repository="${repository}"]`).waitFor({ state: 'attached', timeout: TIMEOUT });
+  await popup.locator('#preview-enabled').check();
+  await waitFor('Popup settings to become active', async () => {
+    return popup.locator('[data-settings-surface][data-preview-enabled="true"]').count();
+  });
+  assert(
+    !(await popup.locator('#capability-javascript').isDisabled()),
+    'Capabilities should be configurable after Preview is enabled.',
+  );
+  await popup.close();
 }
 
 async function inspect(page) {
@@ -330,7 +350,7 @@ try {
   page.on('pageerror', error => logs.push({ type: 'pageerror', text: error.message }));
 
   const worker = await findExtensionWorker(context);
-  await configureAllowlist(worker);
+  await configureSettingsThroughPopup(context, worker);
   await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
   await waitForPreviewControl(page);
 

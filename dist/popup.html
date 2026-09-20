@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HTML Preview settings</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup" data-settings-surface data-settings-state="loading">
+      <header class="popup-header">
+        <span class="product-mark" aria-hidden="true">H</span>
+        <div>
+          <div class="product-title">HTML Preview</div>
+          <div class="product-subtitle">GitHub HTML rendering</div>
+        </div>
+      </header>
+
+      <section class="settings-card" aria-labelledby="preview-settings-title">
+        <h2 id="preview-settings-title" class="visually-hidden">Preview settings</h2>
+        <label class="master-card">
+          <span class="setting-copy">
+            <strong>Enable HTML preview</strong>
+            <small id="preview-subtitle">Preview is currently off</small>
+          </span>
+          <input id="preview-enabled" class="toggle-input" type="checkbox" role="switch">
+          <span class="toggle" aria-hidden="true"><span></span></span>
+        </label>
+
+        <section class="popup-section" aria-labelledby="capabilities-title">
+          <div class="section-title">
+            <h2 id="capabilities-title">Preview capabilities</h2>
+            <span id="capability-summary">All off by default</span>
+          </div>
+          <div id="capability-list" class="capability-list">
+            <label class="capability-row">
+              <span>Run JavaScript</span>
+              <input id="capability-javascript" class="toggle-input" type="checkbox" role="switch">
+              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
+            </label>
+
+            <label class="capability-row">
+              <span>Allow form submission</span>
+              <input id="capability-forms" class="toggle-input" type="checkbox" role="switch">
+              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
+            </label>
+
+            <label class="capability-row">
+              <span>Allow popups</span>
+              <input id="capability-popups" class="toggle-input" type="checkbox" role="switch">
+              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
+            </label>
+
+            <label class="capability-row">
+              <span>Allow browser dialogs</span>
+              <input id="capability-modals" class="toggle-input" type="checkbox" role="switch">
+              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
+            </label>
+          </div>
+          <p id="capability-help" class="helper">Enable HTML preview to configure capabilities.</p>
+        </section>
+      </section>
+
+      <section class="allowlist-section" aria-labelledby="allowlist-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="allowlist-title">Allowed repositories</h2>
+            <p id="repository-summary">0 repositories</p>
+          </div>
+        </div>
+
+        <form id="repository-form" class="repository-form">
+          <label class="visually-hidden" for="repository-input">Repository</label>
+          <input
+            id="repository-input"
+            name="repository"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="owner/repository"
+            aria-describedby="repository-help repository-error"
+          >
+          <button type="submit" class="add-button">Add</button>
+        </form>
+        <p id="repository-help" class="field-help">Use an exact <code>owner/repository</code> name.</p>
+        <p id="repository-error" class="field-error" role="alert" aria-live="polite"></p>
+
+        <ul id="repository-list" class="repository-list" aria-label="Approved repositories"></ul>
+        <p id="repository-empty" class="empty-state">No repositories approved yet.</p>
+      </section>
+
+      <footer class="popup-footer">
+        <span id="footer-status">Changes save automatically.</span>
+        <span id="active-status" hidden>● Active</span>
+      </footer>
+    </main>
+
+    <script src="src/lib/settings.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

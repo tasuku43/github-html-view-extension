@@ -10,6 +10,10 @@
     "https://raw.githubusercontent.com/*",
     "https://media.githubusercontent.com/*"
   ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "HTML Preview settings"
+  },
   "background": {
     "comment": "Fetches GitHub content because /raw/ redirects away from the page origin.",
     "service_worker": "src/worker.js"
@@ -22,7 +26,7 @@
         "src/lib/blob-url.js",
         "src/lib/view-transition.js",
         "src/lib/preview-session.js",
-        "src/lib/allowlist.js",
+        "src/lib/settings.js",
         "src/lib/inline.js",
         "src/github/dom.js",
         "src/preview.js"
@@ -31,7 +35,6 @@
       "run_at": "document_start"
     }
   ],
-  "options_page": "options.html",
   "sandbox": {
     "comment": "The only place where repository JavaScript may run; never grant allow-same-origin.",
     "pages": ["sandbox.html"]

@@ -595,6 +595,23 @@
     surface.style.setProperty('--ghpreview-top-offset', previewTopOffset(boundary) + 'px');
   }
 
+  function sandboxPolicy(capabilities = {}) {
+    // The bundled bootstrap always needs allow-scripts to start. The javascript setting
+    // controls repository scripts separately in inlineDocument; it must not disable the
+    // bootstrap that enforces the opaque-origin message boundary.
+    const tokens = ['allow-scripts'];
+    if (capabilities.forms === true) {
+      tokens.push('allow-forms');
+    }
+    if (capabilities.popups === true) {
+      tokens.push('allow-popups');
+    }
+    if (capabilities.modals === true) {
+      tokens.push('allow-modals');
+    }
+    return tokens.join(' ');
+  }
+
   /**
    * Mount the iframe.
    *
@@ -665,9 +682,11 @@
    *
    * Repeated calls keep one iframe and return the existing element.
    */
-  function mountFrame(sandboxUrl, beforeInsert) {
+  function mountFrame(sandboxUrl, capabilities, beforeInsert) {
+    const policy = sandboxPolicy(capabilities);
     const existing = document.getElementById(FRAME_ID);
     if (existing !== null) {
+      existing.setAttribute('sandbox', policy);
       // Prepare the listener before repairing an entry that may already be navigating.
       if (typeof beforeInsert === 'function') {
         beforeInsert(existing, false);
@@ -692,7 +711,7 @@
 
     const frame = document.createElement('iframe');
     frame.id = FRAME_ID;
-    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals');
+    frame.setAttribute('sandbox', policy);
     // Set the known bundled entry point before insertion, matching the baseline startup
     // path. The callback lets the parent subscribe before the browsing context starts.
     frame.src = sandboxUrl;
@@ -757,9 +776,29 @@
    *
    * @param load returns {text, dataUri} for a URL, or null when it cannot be loaded
    */
-  async function inlineDocument(htmlText, base, load, sessionId = '') {
+  function applyCapabilities(doc, capabilities = {}) {
+    if (capabilities.javascript === true) {
+      return;
+    }
+
+    // The sandbox bootstrap remains enabled, but repository code must not execute when
+    // the JavaScript capability is off. Remove both script elements and inline handlers
+    // before the document is serialized and sent to the sandbox.
+    doc.querySelectorAll('script').forEach(element => element.remove());
+    doc.querySelectorAll('*').forEach(element => {
+      Array.from(element.attributes).forEach(attribute => {
+        if (/^on/i.test(attribute.name)) {
+          element.removeAttribute(attribute.name);
+        }
+      });
+    });
+  }
+
+  async function inlineDocument(htmlText, base, load, sessionId = '', capabilities = {}) {
     const doc = new DOMParser().parseFromString(htmlText, 'text/html');
     const notes = [];
+
+    applyCapabilities(doc, capabilities);
 
     // A remaining <base> could redirect an unresolved reference unexpectedly.
     doc.querySelectorAll('base').forEach(element => element.remove());

@@ -4,26 +4,50 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const workerSource = fs.readFileSync(new URL('../src/worker.js', import.meta.url), 'utf8');
+const workerRoot = new URL('../src/', import.meta.url);
 
-function createWorker(fetchImpl) {
+function createWorker(
+  fetchImpl,
+  settingsValue = {
+    schemaVersion: 1,
+    previewEnabled: true,
+    capabilities: { javascript: true, forms: false, popups: false, modals: false },
+    repositories: ['example/project'],
+  },
+) {
   let listener = null;
-  const context = {
+  const context = vm.createContext({
     ArrayBuffer,
+    URL,
     TextDecoder,
     Uint8Array,
     btoa: value => Buffer.from(value, 'binary').toString('base64'),
     fetch: fetchImpl,
     chrome: {
       runtime: {
+        lastError: undefined,
         onMessage: {
           addListener(callback) {
             listener = callback;
           },
         },
       },
+      storage: {
+        local: {
+          get(key, callback) {
+            callback({ [key]: settingsValue });
+          },
+        },
+      },
     },
+  });
+  context.importScripts = (...scripts) => {
+    scripts.forEach(script => {
+      const source = fs.readFileSync(new URL(script, workerRoot), 'utf8');
+      vm.runInContext(source, context, { filename: script });
+    });
   };
-  vm.runInNewContext(workerSource, context, { filename: 'worker.js' });
+  vm.runInContext(workerSource, context, { filename: 'worker.js' });
   assert.equal(typeof listener, 'function');
 
   return function dispatch(message, sender = { url: 'https://github.com/example/project/blob/main/index.html' }) {
@@ -135,4 +159,84 @@ test('returns a successful payload with the request ID', async () => {
   assert.equal(result.contentType, 'text/html');
   assert.equal(result.text, '<h1>ok</h1>');
   assert.equal(typeof result.base64, 'string');
+});
+
+test('rejects a fetch when the master Preview switch is off', async () => {
+  let fetchCount = 0;
+  const dispatch = createWorker(
+    async () => {
+      fetchCount += 1;
+      return response();
+    },
+    {
+      previewEnabled: false,
+      capabilities: {},
+      repositories: ['example/project'],
+    },
+  );
+
+  const result = await dispatch({
+    type: 'ghpreview:fetch',
+    url: 'https://github.com/example/project/raw/main/index.html',
+    requestId: 'request-disabled',
+  });
+
+  assert.deepEqual(plain(result), {
+    ok: false,
+    status: 0,
+    errorCode: 'preview-disabled',
+    requestId: 'request-disabled',
+  });
+  assert.equal(fetchCount, 0);
+});
+
+test('rejects a fetch when the sender repository is not allowlisted', async () => {
+  let fetchCount = 0;
+  const dispatch = createWorker(
+    async () => {
+      fetchCount += 1;
+      return response();
+    },
+    {
+      previewEnabled: true,
+      capabilities: {},
+      repositories: ['another/project'],
+    },
+  );
+
+  const result = await dispatch({
+    type: 'ghpreview:fetch',
+    url: 'https://github.com/example/project/raw/main/index.html',
+    requestId: 'request-not-allowed',
+  });
+
+  assert.deepEqual(plain(result), {
+    ok: false,
+    status: 0,
+    errorCode: 'repository-not-allowed',
+    requestId: 'request-not-allowed',
+  });
+  assert.equal(fetchCount, 0);
+});
+
+test('rejects a raw target from a different repository', async () => {
+  let fetchCount = 0;
+  const dispatch = createWorker(async () => {
+    fetchCount += 1;
+    return response();
+  });
+
+  const result = await dispatch({
+    type: 'ghpreview:fetch',
+    url: 'https://github.com/other/project/raw/main/index.html',
+    requestId: 'request-mismatch',
+  });
+
+  assert.deepEqual(plain(result), {
+    ok: false,
+    status: 0,
+    errorCode: 'repository-mismatch',
+    requestId: 'request-mismatch',
+  });
+  assert.equal(fetchCount, 0);
 });

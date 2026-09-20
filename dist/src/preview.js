@@ -11,7 +11,7 @@
     blobUrl,
     viewTransition,
     previewSession,
-    allowlist,
+    settings,
     githubDom,
     inline,
   } = global.GHPREVIEW;
@@ -25,7 +25,7 @@
   const PING = PREFIX + 'sandbox-ping';
   const HEIGHT = PREFIX + 'height';
   const RUNTIME_ERROR = PREFIX + 'runtime-error';
-  const ALLOWLIST_KEY = 'allowlist';
+  const SETTINGS_KEY = settings.STORAGE_KEY;
 
   const STATES = previewSession.PHASES;
   let previewState = 'idle';
@@ -224,13 +224,25 @@
    * remains unchanged.
    */
   async function isEnabled(parsed, current) {
-    const entries = allowlist.parseAllowlist(await storageGet(ALLOWLIST_KEY));
-    const allowed = allowlist.isAllowed(blobUrl.repoKey(parsed), entries);
-    debug('settings-loaded', { allowlistEntryCount: entries.length }, current);
-    if (!allowed) {
-      emit('warn', 'repository-not-allowed', 'checking-settings', current, 'repository-not-allowed');
+    const loaded = settings.normalize(await storageGet(SETTINGS_KEY));
+    debug(
+      'settings-loaded',
+      {
+        previewEnabled: loaded.previewEnabled,
+        allowlistEntryCount: loaded.repositories.length,
+        capabilities: { ...loaded.capabilities },
+      },
+      current,
+    );
+    if (!loaded.previewEnabled) {
+      emit('warn', 'preview-disabled', 'checking-settings', current, 'preview-disabled');
+      return { allowed: false, errorCode: 'preview-disabled', settings: loaded };
     }
-    return allowed;
+    if (!settings.isAllowed(blobUrl.repoKey(parsed), loaded)) {
+      emit('warn', 'repository-not-allowed', 'checking-settings', current, 'repository-not-allowed');
+      return { allowed: false, errorCode: 'repository-not-allowed', settings: loaded };
+    }
+    return { allowed: true, errorCode: null, settings: loaded };
   }
 
   function abandonOperation(reason) {
@@ -259,11 +271,12 @@
     const current = operationFor(location.href);
     debug('page-detected', { view: file.view, fileKind: 'html' }, current);
     setState('checking-settings', null, current);
-    if (!(await isEnabled(file, current))) {
-      emit('warn', 'preview-disabled', 'checking-settings', current, 'repository-not-allowed');
-      teardown('disabled', current);
+    const access = await isEnabled(file, current);
+    if (!access.allowed) {
+      teardown('disabled', current, access.errorCode);
       return;
     }
+    current.settings = access.settings;
     if (isStale(current)) {
       return;
     }
@@ -298,7 +311,7 @@
     // Mount before fetching. If the container is not available yet, the call is a no-op
     // and the mutation observer will retry when GitHub inserts it.
     setState('mounting', null, current);
-    openFrame(chrome.runtime.getURL('sandbox.html'), file, current);
+    openFrame(chrome.runtime.getURL('sandbox.html'), file, current.settings.capabilities, current);
 
     if (rendered === location.href) {
       return;
@@ -352,10 +365,10 @@
     githubDom.removeFrame();
   }
 
-  function teardown(nextState = 'idle', current = operation) {
+  function teardown(nextState = 'idle', current = operation, errorCode = null) {
     unmount('teardown', current);
     githubDom.removePreviewLink();
-    setState(nextState, nextState === 'disabled' ? 'repository-not-allowed' : null, current);
+    setState(nextState, errorCode, current);
   }
 
   function recheck(parsed, current = operation) {
@@ -426,6 +439,7 @@
       blobUrl.resolutionBase(parsed),
       (url) => load(url, current),
       current.sessionId,
+      current.settings && current.settings.capabilities,
     );
     debug('document-built', {
       htmlLength: built.html.length,
@@ -461,7 +475,12 @@
 
     handover.html = built.html;
     setState('rendering', null, current);
-    openFrame(chrome.runtime.getURL('sandbox.html'), parsed, current);
+    openFrame(
+      chrome.runtime.getURL('sandbox.html'),
+      parsed,
+      current.settings && current.settings.capabilities,
+      current,
+    );
     flush();
   }
 
@@ -556,7 +575,7 @@
     }, SANDBOX_TIMEOUT_MS);
   }
 
-  function openFrame(sandboxUrl, parsed, current) {
+  function openFrame(sandboxUrl, parsed, capabilities, current) {
     previewSession.attachSandbox(current);
     const entry = new URL(sandboxUrl);
     entry.searchParams.set('session', current.sessionId);
@@ -599,7 +618,7 @@
       debug('sandbox-navigation-started', undefined, current);
       scheduleSandboxTimeout(frame, parsed, current);
     };
-    const mounted = githubDom.mountFrame(entry.href, prepare);
+    const mounted = githubDom.mountFrame(entry.href, capabilities, prepare);
     if (mounted.frame === null) {
       return;
     }
@@ -840,10 +859,30 @@
       return;
     }
     const current = operationFor(location.href);
-    if (await isEnabled(parsed, current)) {
+    const access = await isEnabled(parsed, current);
+    if (access.allowed) {
+      current.settings = access.settings;
       load(blobUrl.rawUrl(parsed), current, 'source');
     }
   })();
+
+  // Settings changes are part of the page lifecycle. Re-evaluate the current file without
+  // requiring a tab reload, and invalidate any fetch or sandbox work that used old policy.
+  if (chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes[SETTINGS_KEY]) {
+        return;
+      }
+      debug('settings-changed', { source: 'popup' }, operation);
+      cache.clear();
+      loadFailures.clear();
+      rendered = null;
+      if (operation !== null) {
+        abandonOperation('settings-changed');
+      }
+      apply();
+    });
+  }
 
   githubDom.onLeavePreview(({ label, event } = {}) => {
     const file = blobUrl.parseFileUrl(location.href);
