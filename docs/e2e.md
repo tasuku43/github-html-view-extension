@@ -17,7 +17,12 @@ npx playwright install chromium
 
 ## Run against a ready fixture
 
-Use a public GitHub HTML Blob URL whose document satisfies the self-contained HTML policy:
+Use the repository's canonical self-contained fixture. After pushing the repository, replace
+the owner and repository placeholders with the public GitHub URL:
+
+```text
+https://github.com/owner/repository/blob/main/docs/sample/index.html
+```
 
 ```sh
 GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/path/to/fixture.html" \
@@ -45,6 +50,15 @@ GHPREVIEW_E2E_EXPECT_ERROR_CODE=html-policy-violation \
 npm run e2e
 ```
 
+To verify that a GitHub 404 page does not receive a Preview control, use a deliberately
+missing HTML path in the same repository:
+
+```sh
+GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/docs/sample/missing-file.html" \
+GHPREVIEW_E2E_EXPECT_NO_PREVIEW=1 \
+npm run e2e
+```
+
 ## What the runner verifies
 
 - the repository is enabled in the extension storage context;
@@ -54,6 +68,7 @@ npm run e2e
 - Preview remains present while Code and Blame are selected;
 - Blame -> Code ends at the Blob source URL with `?plain=1`;
 - the extension's Preview control remains available after GitHub SPA navigation.
+- a GitHub missing-file response does not receive a Preview control.
 
 The same run verifies the Popup-to-storage contract before opening GitHub, so a Popup
 regression is visible rather than being hidden by direct storage setup.
@@ -61,5 +76,6 @@ regression is visible rather than being hidden by direct storage setup.
 The default run keeps the browser visible because extension loading is more reliable in a
 persistent headed context. Set `GHPREVIEW_E2E_HEADLESS=1` only when the selected browser
 supports extension loading in headless mode. Set `GHPREVIEW_E2E_NAVIGATION=0` to inspect
-only the initial terminal state. Set `GHPREVIEW_E2E_BROWSER_PATH` or `CHROME_PATH` when a
-specific browser executable is required.
+only the initial terminal state. Set `GHPREVIEW_E2E_EXPECT_NO_PREVIEW=1` for the missing-file
+regression check. Set `GHPREVIEW_E2E_BROWSER_PATH` or `CHROME_PATH` when a specific browser
+executable is required.

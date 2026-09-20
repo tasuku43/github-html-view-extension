@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTML Preview Fixture</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #0d1117;
+      --surface: #161b22;
+      --surface-raised: #1f2630;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --success: #3fb950;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(88, 166, 255, 0.14), transparent 34rem),
+        var(--background);
+      color: var(--text);
+      font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      width: min(100% - 48px, 960px);
+      margin: 0 auto;
+      padding: clamp(32px, 7vw, 72px) 0 80px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 32px;
+      align-items: end;
+      margin-bottom: 40px;
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, p { margin-top: 0; }
+
+    h1 {
+      max-width: 13ch;
+      margin-bottom: 16px;
+      font-size: clamp(2.5rem, 8vw, 5.5rem);
+      line-height: 0.98;
+      letter-spacing: -0.055em;
+    }
+
+    .lead {
+      max-width: 62ch;
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 1.06rem;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border: 1px solid rgba(63, 185, 80, 0.4);
+      border-radius: 999px;
+      color: #7ee787;
+      background: rgba(63, 185, 80, 0.1);
+      white-space: nowrap;
+    }
+
+    .status::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      content: "";
+    }
+
+    .panel {
+      margin-top: 24px;
+      padding: clamp(20px, 4vw, 32px);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(22, 27, 34, 0.88);
+      box-shadow: var(--shadow);
+    }
+
+    .panel h2 { margin-bottom: 8px; font-size: 1.35rem; }
+
+    .panel-intro { margin-bottom: 24px; color: var(--muted); }
+
+    .checks {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .check {
+      min-height: 150px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface-raised);
+    }
+
+    .check strong { display: block; margin-bottom: 8px; }
+    .check p { margin-bottom: 0; color: var(--muted); font-size: 0.92rem; }
+
+    .interaction {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 16px;
+      margin-top: 24px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+
+    button {
+      padding: 9px 14px;
+      border: 1px solid rgba(88, 166, 255, 0.55);
+      border-radius: 8px;
+      color: #ffffff;
+      background: #1f6feb;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button:hover { background: #388bfd; }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+    .interaction-note { margin: 0; color: var(--muted); }
+
+    details {
+      margin-top: 24px;
+      padding: 16px 18px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+
+    summary { cursor: pointer; font-weight: 650; }
+    details p { margin: 12px 0 0; color: var(--muted); }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: rgba(110, 118, 129, 0.24);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+
+    @media (max-width: 700px) {
+      .hero { grid-template-columns: 1fr; gap: 20px; }
+      .checks { grid-template-columns: 1fr; }
+      .shell { width: min(100% - 32px, 960px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HTML Preview Fixture</p>
+        <h1>One file. Several trust boundaries.</h1>
+        <p class="lead">
+          A self-contained document for checking layout, scrolling, fragments, controls,
+          and optional classic JavaScript inside the Preview sandbox.
+        </p>
+      </div>
+      <span class="status" id="fixture-status">Fixture ready</span>
+    </header>
+
+    <section class="panel" aria-labelledby="checks-title">
+      <h2 id="checks-title">Deterministic checks</h2>
+      <p class="panel-intro">
+        This page has no external files, network requests, module scripts, or embedded frames.
+      </p>
+
+      <div class="checks">
+        <article class="check">
+          <strong>Inline styling</strong>
+          <p>All layout and visual styles are kept in this document.</p>
+        </article>
+        <article class="check">
+          <strong>Long-page layout</strong>
+          <p>The content provides enough height to verify page-level scrolling.</p>
+        </article>
+        <article class="check">
+          <strong>Safe interaction</strong>
+          <p>A classic inline script updates this page only when JavaScript is enabled.</p>
+        </article>
+      </div>
+
+      <div class="interaction" id="interaction">
+        <button id="interaction-button" type="button">Run interaction check</button>
+        <p class="interaction-note" id="interaction-note">
+          JavaScript capability is optional for this fixture.
+        </p>
+      </div>
+
+      <details open>
+        <summary>What this fixture verifies</summary>
+        <p>
+          Preview can render a single HTML file without resolving a relative stylesheet or
+          script. Use <code>#interaction</code> to verify same-document fragment navigation.
+        </p>
+      </details>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      var button = document.getElementById('interaction-button');
+      var note = document.getElementById('interaction-note');
+      var status = document.getElementById('fixture-status');
+
+      if (!button || !note || !status) return;
+
+      status.textContent = 'Fixture ready · JavaScript enabled';
+      button.addEventListener('click', function () {
+        note.textContent = 'Interaction completed inside the isolated Preview document.';
+        button.textContent = 'Interaction passed';
+      });
+    }());
+  </script>
+</body>
+</html>
