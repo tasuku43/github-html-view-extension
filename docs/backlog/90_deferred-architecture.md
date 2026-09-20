@@ -1,6 +1,6 @@
 # 90 — Deferred Architecture Work
 
-Status: Deferred by design  
+Status: Deferred
 Priority: P2 — revisit only when maintenance cost justifies it
 
 These items are intentionally not prerequisites for the next product milestone.

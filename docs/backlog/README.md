@@ -13,3 +13,25 @@ starts.
 The current JavaScript baseline, sandbox boundary, and browser E2E check are the starting
 point. A backlog item must not turn into a broad rewrite unless its acceptance criteria
 prove that the current boundary cannot support the requested behavior.
+
+## Status model
+
+Each item has one `Status` line near the top of the document. Update that line in the same
+commit that changes the work state.
+
+| Status | Meaning |
+| --- | --- |
+| `Planned` | Defined and ready to start. |
+| `In Progress` | Active implementation or validation is underway. |
+| `Blocked` | Progress requires a specific external decision or fix. |
+| `Done` | Acceptance criteria and the relevant checks are complete. |
+| `Deferred` | Intentionally postponed; not part of the current delivery path. |
+
+## Current board
+
+| Item | Priority | Status | Next evidence |
+| --- | --- | --- | --- |
+| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | Planned | Popup-to-GitHub E2E |
+| [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Planned | Valid and policy fixture runs |
+| [03 — Minimal Release Gates](03_release-gates.md) | P1 | Planned | Fresh-checkout verification |
+| [90 — Deferred Architecture Work](90_deferred-architecture.md) | P2 | Deferred | A measured maintenance need |
