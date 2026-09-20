@@ -6,8 +6,15 @@ import { loadScript } from './helpers/load.mjs';
 
 const window = {};
 loadScript('inline.js', { window });
-const { classify, repoRoot, dataUri, rewriteCssUrls, rewriteSrcset, escapeScriptText } =
-  window.GHPREVIEW.inline;
+const {
+  classify,
+  repoRoot,
+  dataUri,
+  rewriteCssUrls,
+  rewriteSrcset,
+  escapeScriptText,
+  validateDocument,
+} = window.GHPREVIEW.inline;
 
 const BASE = 'https://github.com/o/r/raw/main/docs/a.html';
 
@@ -107,4 +114,58 @@ test('escapes </script> inside inlined JavaScript', () => {
 test('creates a data URI when content type is missing', () => {
   assert.equal(dataUri('image/png', 'AAAA'), 'data:image/png;base64,AAAA');
   assert.equal(dataUri('', 'AAAA'), 'data:application/octet-stream;base64,AAAA');
+});
+
+test('accepts a self-contained document with inline CSS and safe passive data', () => {
+  const result = validateDocument(`
+    <!doctype html>
+    <style>body { color: #0969da; }</style>
+    <main><img src="data:image/png;base64,AAAA" alt="fixture"></main>
+  `);
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test('rejects relative resources before rendering', () => {
+  const result = validateDocument(`
+    <link rel="stylesheet" href="styles.css">
+    <img src="images/example.png" alt="relative">
+  `);
+  assert.equal(result.valid, false);
+  assert.deepEqual(
+    result.issues.map(issue => issue.code),
+    ['link-element', 'relative-resource'],
+  );
+});
+
+test('rejects module scripts before they reach the sandbox', () => {
+  const result = validateDocument('<script type="module">import("./module.js");</script>');
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.issues.map(issue => issue.code), ['module-script']);
+});
+
+test('rejects external scripts before the browser executes them', () => {
+  const result = validateDocument('<script src="https://cdn.example.test/example.js"></script>');
+  assert.equal(result.valid, false);
+  assert.deepEqual(result.issues.map(issue => issue.code), ['external-resource']);
+  assert.deepEqual(result.issues[0].location, {
+    line: 1,
+    column: 1,
+    target: 'script[src]',
+    detail: 'external script sources',
+  });
+  assert.equal(result.issues[0].message, 'External script sources are not supported.');
+});
+
+test('reports a safe location for a relative image without exposing its path', () => {
+  const result = validateDocument('<img src="assets/preview.png" alt="fixture">');
+  assert.equal(result.valid, false);
+  assert.equal(result.issues[0].message, 'Relative image sources are not supported.');
+  assert.deepEqual(result.issues[0].location, {
+    line: 1,
+    column: 1,
+    target: 'img[src]',
+    detail: 'relative image sources',
+  });
+  assert.doesNotMatch(JSON.stringify(result.issues[0]), /assets\/preview\.png/);
 });
