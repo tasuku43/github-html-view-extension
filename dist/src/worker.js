@@ -19,7 +19,23 @@ const { blobUrl, settings } = globalThis.GHPREVIEW;
 // Limit fetched source documents so a single preview cannot consume unbounded memory.
 const LIMIT_BYTES = 8 * 1024 * 1024;
 
-async function take(url) {
+function encodeBase64(bytes) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index];
+    const second = index + 1 < bytes.length ? bytes[index + 1] : 0;
+    const third = index + 2 < bytes.length ? bytes[index + 2] : 0;
+    const combined = (first << 16) | (second << 8) | third;
+    output += alphabet[(combined >> 18) & 63];
+    output += alphabet[(combined >> 12) & 63];
+    output += index + 1 < bytes.length ? alphabet[(combined >> 6) & 63] : '=';
+    output += index + 2 < bytes.length ? alphabet[combined & 63] : '=';
+  }
+  return output;
+}
+
+async function take(url, mode = 'text') {
   let response;
   try {
     response = await fetch(url, {
@@ -40,11 +56,17 @@ async function take(url) {
   }
 
   const contentType = (response.headers.get('content-type') || '').split(';')[0].trim();
-  return {
+  const result = {
     ok: true,
     contentType,
-    text: new TextDecoder('utf-8').decode(buffer),
+    byteLength: buffer.byteLength,
   };
+  if (mode === 'base64') {
+    result.data = encodeBase64(new Uint8Array(buffer));
+  } else {
+    result.text = new TextDecoder('utf-8').decode(buffer);
+  }
+  return result;
 }
 
 function reject(code, requestId) {
@@ -170,6 +192,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse(reject('invalid-target', message.requestId));
     return false;
   }
+  if (message.mode !== undefined && message.mode !== 'text' && message.mode !== 'base64') {
+    sendResponse(reject('invalid-mode', message.requestId));
+    return false;
+  }
 
   const senderFile = blobUrl.parseFileUrl(sender.url);
   const senderRepository = senderFile === null ? null : blobUrl.repoKey(senderFile);
@@ -193,7 +219,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse(reject('repository-not-allowed', message.requestId));
         return null;
       }
-      return take(message.url).then(result => sendResponse({ ...result, requestId: message.requestId }));
+      return take(message.url, message.mode || 'text').then(result =>
+        sendResponse({ ...result, requestId: message.requestId }),
+      );
     })
     .catch(error => {
       sendResponse(

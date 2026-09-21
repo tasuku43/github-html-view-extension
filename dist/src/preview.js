@@ -130,6 +130,25 @@
     }
   }
 
+  /**
+   * Release the first-paint guard only after the host switch and the Preview surface agree.
+   * GitHub can expose Code/Blame before it exposes the file-content boundary; releasing on
+   * the switch alone briefly shows a fallback trust/error surface outside that boundary.
+   */
+  function releaseBootstrapWhenPresented(hostSelection, wantsPreview) {
+    if (!githubDom.hasPreviewLink() || !hostSelection.ready) {
+      return;
+    }
+    if (!wantsPreview) {
+      setBootstrapPending(false);
+      return;
+    }
+    const hasSurface = githubDom.hasFrame() || githubDom.hasError() || githubDom.hasTrustRequired();
+    if (hasSurface && !githubDom.needsReconcile()) {
+      setBootstrapPending(false);
+    }
+  }
+
   function beginViewIntent(target) {
     const currentView = viewTransition.inspect(location.href).selectedView;
     const state = VIEW_COORDINATOR.begin(target, currentView);
@@ -171,9 +190,6 @@
       },
       current,
     );
-    if (githubDom.hasPreviewLink() && hostSelection.ready) {
-      setBootstrapPending(false);
-    }
     return state;
   }
 
@@ -189,7 +205,6 @@
       return false;
     }
     const settled = VIEW_COORDINATOR.finish();
-    setBootstrapPending(false);
     debug(
       'view-transition-settled',
       {
@@ -296,30 +311,54 @@
   const cache = new Map();
   const loadFailures = new Map();
 
-  function load(url, current, kind = 'resource') {
-    if (cache.has(url)) {
-      return cache.get(url);
+  function loadKey(url, mode) {
+    return mode + ':' + url;
+  }
+
+  function loadFailure(url, mode = 'text') {
+    return loadFailures.get(loadKey(url, mode)) || null;
+  }
+
+  function load(url, current, kind = 'resource', mode = 'text') {
+    const key = loadKey(url, mode);
+    if (cache.has(key)) {
+      return cache.get(key);
     }
-    debug('request-started', { kind }, current);
+    debug('request-started', { kind, mode }, current);
     const pending = Promise.resolve()
       .then(() => {
-        debug('request-sent', { kind }, current);
-        return ask({ type: PREFIX + 'fetch', url }, current);
+        debug('request-sent', { kind, mode }, current);
+        return ask({ type: PREFIX + 'fetch', url, mode }, current);
       })
       .then(reply => {
       if (!reply || !reply.ok) {
         const errorCode = reply && reply.errorCode ? reply.errorCode : 'fetch-failed';
-        loadFailures.set(url, errorCode);
-        emit('warn', 'response-rejected', 'fetching', current, errorCode, { kind });
+        loadFailures.set(key, errorCode);
+        emit('warn', 'response-rejected', 'fetching', current, errorCode, { kind, mode });
         return null;
       }
-      debug('response-received', { kind, contentType: reply.contentType || 'unknown' }, current);
+      if (
+        (mode === 'text' && typeof reply.text !== 'string') ||
+        (mode === 'base64' && typeof reply.data !== 'string')
+      ) {
+        loadFailures.set(key, 'invalid-response');
+        emit('warn', 'response-rejected', 'fetching', current, 'invalid-response', { kind, mode });
+        return null;
+      }
+      debug('response-received', {
+        kind,
+        mode,
+        contentType: reply.contentType || 'unknown',
+        byteLength: Number.isFinite(reply.byteLength) ? reply.byteLength : null,
+      }, current);
       return {
         text: reply.text,
+        data: reply.data,
+        byteLength: reply.byteLength,
         contentType: reply.contentType,
       };
       });
-    cache.set(url, pending);
+    cache.set(key, pending);
     return pending;
   }
 
@@ -408,10 +447,10 @@
       requestId: current && current.requestId,
       sessionId: current && current.sessionId,
       onTrust: () => trustRepository(parsed, current),
-      onDecline: () => {
+      onOpenCode: () => {
         if (!isStale(current)) {
-          debug('trust-declined', { source: 'preview-surface' }, current);
-          setState('trust-required', 'repository-not-allowed', current);
+          debug('trust-declined', { source: 'trust-surface', action: 'open-code' }, current);
+          go(blobUrl.sourceHref(location.href), viewTransition.VIEWS.CODE);
         }
       },
     });
@@ -496,18 +535,17 @@
     const hostSelection = githubDom.viewSwitchState();
     lastViewSwitchRoot = hostSelection.root;
     finishViewIntent(selectedView, hostSelection);
-    if (githubDom.hasPreviewLink() && hostSelection.ready) {
-      setBootstrapPending(false);
-    }
     if (!wantsPreview) {
       unmount('view-change', current);
       setState('idle', null, current);
+      releaseBootstrapWhenPresented(hostSelection, false);
       return;
     }
     if (!access.allowed) {
       // The master switch is on, so keep Preview visible and make the trust decision part of
       // the Preview flow. No fetch or sandbox frame is started before explicit approval.
       showTrustSurface(file, current, access.errorCode);
+      releaseBootstrapWhenPresented(hostSelection, true);
       return;
     }
     if (githubDom.hasTrustRequired()) {
@@ -519,12 +557,14 @@
     if (githubDom.hasError()) {
       setState('failed', githubDom.getErrorCode() || previewErrorCode || 'preview-failed', current);
       githubDom.reconcileError();
+      releaseBootstrapWhenPresented(hostSelection, true);
       return;
     }
     // Mount before fetching. If the container is not available yet, the call is a no-op
     // and the mutation observer will retry when GitHub inserts it.
     setState('mounting', null, current);
     openFrame(chrome.runtime.getURL('sandbox.html'), file, current.settings.capabilities, current);
+    releaseBootstrapWhenPresented(hostSelection, true);
 
     if (rendered === location.href) {
       return;
@@ -627,15 +667,29 @@
     apply();
   }
 
+  function validationErrorCode(issues) {
+    const codes = new Set((issues || []).map(issue => issue && issue.code));
+    const resourceOnly = codes.size > 0 && [...codes].every(code =>
+      ['external-resource', 'root-relative-resource', 'unsafe-data-url'].includes(code),
+    );
+    return resourceOnly ? 'resource-resolution-failed' : 'html-policy-violation';
+  }
+
+  function validationReason(errorCode) {
+    return errorCode === 'resource-resolution-failed'
+      ? 'This file depends on repository resources that could not be resolved safely.'
+      : 'This file cannot be previewed under the current HTML policy.';
+  }
+
   async function render(parsed, current) {
     setState('fetching', null, current);
     const sourceUrl = blobUrl.rawUrl(parsed);
-    const source = await load(sourceUrl, current, 'source');
+    const source = await load(sourceUrl, current, 'source', 'text');
     if (isStale(current)) {
       return;
     }
     if (source === null) {
-      const errorCode = loadFailures.get(sourceUrl) || 'source-fetch-failed';
+      const errorCode = loadFailure(sourceUrl, 'text') || 'source-fetch-failed';
       emit('warn', 'fetch-failed', 'fetching', current, errorCode, { kind: 'source' });
       failPreview({
         code: errorCode,
@@ -662,7 +716,8 @@
       issueCodes: validation.issues.map(issue => issue.code),
     }, current);
     if (!validation.valid) {
-      emit('warn', 'validation-failed', 'validating', current, 'html-policy-violation', {
+      const errorCode = validationErrorCode(validation.issues);
+      emit('warn', 'validation-failed', 'validating', current, errorCode, {
         issueCount: validation.issues.length,
       });
       if (rendered !== location.href || isStale(current)) {
@@ -670,8 +725,8 @@
         return;
       }
       failPreview({
-        code: 'html-policy-violation',
-        reason: 'This file cannot be previewed because it is not self-contained.',
+        code: errorCode,
+        reason: validationReason(errorCode),
         issues: validation.issues,
         onOpenCode: () => go(blobUrl.sourceHref(location.href)),
         onRecheck: () => recheck(parsed, current),
@@ -679,8 +734,73 @@
       return;
     }
 
-    const built = githubDom.prepareDocument(
+    setState('validating', null, current);
+    debug('resource-resolution-started', {
+      base: 'repository-raw-file',
+    }, current);
+    const resolved = await inline.resolveResources(
       source.text,
+      sourceUrl,
+      async (url, details) => {
+        const resource = await load(url, current, details.kind, details.mode);
+        if (resource === null) {
+          return {
+            ok: false,
+            errorCode: loadFailure(url, details.mode),
+          };
+        }
+        return resource;
+      },
+      {
+        javascript: current.settings && current.settings.capabilities && current.settings.capabilities.javascript === true,
+      },
+    );
+    if (isStale(current)) {
+      return;
+    }
+    debug('resource-resolution-completed', {
+      valid: resolved.valid,
+      resourceCount: resolved.resourceCount,
+      byteCount: resolved.byteCount,
+      issueCodes: resolved.issues.map(issue => issue.code),
+    }, current);
+    if (!resolved.valid) {
+      emit('warn', 'resource-resolution-failed', 'validating', current, 'resource-resolution-failed', {
+        issueCount: resolved.issues.length,
+        resourceCount: resolved.resourceCount,
+      });
+      failPreview({
+        code: 'resource-resolution-failed',
+        reason: 'This file depends on repository resources that could not be resolved safely.',
+        issues: resolved.issues,
+        onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+        onRecheck: () => recheck(parsed, current),
+      }, current);
+      return;
+    }
+
+    // A fetched classic script or stylesheet is now part of the document. Validate the
+    // resolved document again so active or ambiguous content cannot bypass the structural
+    // policy merely by living in another repository file.
+    const resolvedValidation = inline.validateDocument(resolved.html);
+    if (!resolvedValidation.valid) {
+      const errorCode = validationErrorCode(resolvedValidation.issues);
+      emit('warn', 'validation-failed', 'validating', current, errorCode, {
+        stage: 'resolved-document',
+        issueCount: resolvedValidation.issues.length,
+      });
+      failPreview({
+        code: errorCode,
+        reason: validationReason(errorCode),
+        issues: resolvedValidation.issues,
+        onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+        onRecheck: () => recheck(parsed, current),
+      }, current);
+      return;
+    }
+
+    const built = githubDom.prepareDocument(
+      resolved.html,
       current.sessionId,
       current.settings && current.settings.capabilities,
     );
@@ -770,6 +890,7 @@
       sessionId: current && current.sessionId,
       errorCode,
     });
+    releaseBootstrapWhenPresented(githubDom.viewSwitchState(), true);
   }
 
   function scheduleSandboxTimeout(frame, parsed, current) {
@@ -1220,7 +1341,6 @@
     if (previewTransitionReady) {
       pendingNavigation = null;
       commitPresentedView(viewTransition.VIEWS.PREVIEW);
-      setBootstrapPending(false);
       debug(
         'preview-transition-committed',
         {

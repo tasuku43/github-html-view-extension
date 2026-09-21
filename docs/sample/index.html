@@ -181,7 +181,7 @@
         <p class="eyebrow">HTML Preview Fixture</p>
         <h1>One file. Several trust boundaries.</h1>
         <p class="lead">
-          A self-contained document for checking layout, scrolling, fragments, controls,
+          A deterministic document for checking layout, scrolling, fragments, controls,
           and optional classic JavaScript inside the Preview sandbox.
         </p>
       </div>
@@ -191,7 +191,8 @@
     <section class="panel" aria-labelledby="checks-title">
       <h2 id="checks-title">Deterministic checks</h2>
       <p class="panel-intro">
-        This page has no external files, network requests, module scripts, or embedded frames.
+          This page uses inline styles and scripts so the core Preview surface can be checked
+          without adding a repository dependency graph.
       </p>
 
       <div class="checks">

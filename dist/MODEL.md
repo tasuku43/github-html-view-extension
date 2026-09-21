@@ -40,14 +40,17 @@ from the sender's current page, rechecks the global setting and exact repository
 and returns a typed success or failure code. The content script never fetches arbitrary URLs
 directly.
 
-The fetched source is validated before it reaches the sandbox. Relative resources, external
-resources, external or module scripts, link elements, embedded frames, CSS imports, network
-APIs, unsafe navigation schemes, and unsafe data URLs are rejected. Safe passive media data
-URLs and same-document fragment links are allowed. No subresource inlining or source cache
-is part of the product contract.
+The fetched source is validated before it reaches the sandbox. Repository-relative stylesheets,
+images, fonts, CSS `url(...)` references, CSS imports, and classic scripts are resolved by the
+content script through Worker responses and rewritten into the document. External and
+root-relative resources, module scripts, embedded frames, network APIs, unsafe navigation
+schemes, and unsafe data URLs are rejected. Safe passive media data URLs and same-document
+fragment links are allowed. Resolution is bounded and a required dependency failure rejects
+the complete document; no misleading partial render is allowed.
 
 When JavaScript is disabled, repository scripts and inline event handlers are removed before
-rendering. When it is enabled, only inline classic scripts are allowed. Forms remain visible
+rendering. When it is enabled, only inline or resolved repository-relative classic scripts are
+allowed. Forms remain visible
 and editable, but the sandbox policy does not grant form submission or popup creation.
 
 ## Module responsibilities
@@ -60,7 +63,7 @@ and editable, but the sandbox policy does not grant form submission or popup cre
 | `src/lib/view-coordinator.js` | Coordinate user intent with GitHub's native view replacement. |
 | `src/lib/preview-session.js` | Own request/session identity, lifecycle phase, and stale invalidation. |
 | `src/lib/settings.js` | Normalize settings shared by Popup, content script, and Worker. |
-| `src/lib/inline.js` | Validate the self-contained HTML policy. |
+| `src/lib/inline.js` | Validate the HTML policy and resolve supported repository dependencies. |
 | `src/github/dom.js` | Insert controls, mount the sandbox frame, render failure/warning surfaces, and resize it. |
 | `src/preview.js` | Coordinate settings, navigation, fetches, lifecycle, and sandbox handoff. |
 | `src/worker.js` | Validate trust/fetch requests, persist exact trust, and fetch GitHub content. |

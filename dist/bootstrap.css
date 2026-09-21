@@ -7,3 +7,9 @@
 html[data-ghpreview-bootstrap="pending"] ul[aria-label="File view"] {
   visibility: hidden !important;
 }
+
+/* A trust/error fallback can be created before GitHub exposes the file body. Keep that
+ * temporary surface out of the first paint until the content boundary can own it. */
+html[data-ghpreview-bootstrap="pending"] .ghpreview-trust-overlay {
+  visibility: hidden !important;
+}

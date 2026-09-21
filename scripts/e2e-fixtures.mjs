@@ -43,6 +43,13 @@ const cases = [
   },
   { name: 'valid', path: 'docs/sample/index.html', state: 'ready' },
   {
+    name: 'repository-backed',
+    path: 'docs/sample/repository-backed/index.html',
+    state: 'ready',
+    resourceFlow: true,
+    enableJavaScript: true,
+  },
+  {
     name: 'direct-code-start',
     path: 'docs/sample/index.html',
     state: 'idle',
@@ -58,10 +65,10 @@ const cases = [
     initialView: 'blame',
   },
   {
-    name: 'relative-resource',
-    path: 'docs/sample/invalid/relative-resource.html',
+    name: 'missing-resource',
+    path: 'docs/sample/invalid/missing-resource.html',
     state: 'failed',
-    errorCode: 'html-policy-violation',
+    errorCode: 'resource-resolution-failed',
   },
   {
     name: 'module-script',
@@ -73,7 +80,7 @@ const cases = [
     name: 'external-resource',
     path: 'docs/sample/invalid/external-resource.html',
     state: 'failed',
-    errorCode: 'html-policy-violation',
+    errorCode: 'resource-resolution-failed',
   },
   {
     name: 'runtime-error',
@@ -104,6 +111,7 @@ function runCase(candidate) {
     GHPREVIEW_E2E_EXPECT_ERROR_CODE: candidate.errorCode || '',
     GHPREVIEW_E2E_EXPECT_NO_PREVIEW: candidate.noPreview ? '1' : '0',
     GHPREVIEW_E2E_ENABLE_JAVASCRIPT: candidate.enableJavaScript ? '1' : '0',
+    GHPREVIEW_E2E_RESOURCE_FLOW: candidate.resourceFlow ? '1' : '0',
     GHPREVIEW_E2E_PRESERVE_TARGET_VIEW: candidate.preserveTargetView ? '1' : '0',
     GHPREVIEW_E2E_EXPECT_INITIAL_VIEW: candidate.initialView || '',
     GHPREVIEW_E2E_TRUST_FLOW: candidate.trustFlow ? '1' : '0',

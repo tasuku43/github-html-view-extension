@@ -31,6 +31,7 @@ const TRACE_TRANSITIONS = process.env.GHPREVIEW_E2E_TRACE_TRANSITIONS === '1';
 const TRACE_STARTUP = process.env.GHPREVIEW_E2E_TRACE_STARTUP === '1';
 const PRESERVE_TARGET_VIEW = process.env.GHPREVIEW_E2E_PRESERVE_TARGET_VIEW === '1';
 const TRUST_FLOW = process.env.GHPREVIEW_E2E_TRUST_FLOW === '1';
+const RESOURCE_FLOW = process.env.GHPREVIEW_E2E_RESOURCE_FLOW === '1';
 const SECOND_TRUST_URL = process.env.GHPREVIEW_E2E_SECOND_URL || '';
 const EXPECTED_INITIAL_VIEW = (
   process.env.GHPREVIEW_E2E_EXPECT_INITIAL_VIEW ||
@@ -327,6 +328,11 @@ async function inspect(page) {
       hasFrame: Boolean(frame),
       hasError: Boolean(error),
       hasTrust: Boolean(document.querySelector('#ghpreview-trust')),
+      trustPlacement: document.querySelector('#ghpreview-trust')?.classList.contains('ghpreview-trust-overlay')
+        ? 'overlay'
+        : document.querySelector('#ghpreview-trust')
+          ? 'inline'
+          : null,
       hasWarning: Boolean(warning),
     };
   });
@@ -735,6 +741,45 @@ async function inspectFrameGeometry(page) {
   return { host, document: documentMetrics };
 }
 
+async function inspectRepositoryFixture(page) {
+  const sandbox = page.frames().find(frame => frame.url().includes('/sandbox.html'));
+  if (!sandbox) {
+    throw new Error('The sandbox frame was not available for repository fixture verification.');
+  }
+  return sandbox.evaluate(async () => {
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    const styles = Array.from(document.querySelectorAll('style')).map(style => style.textContent || '');
+    const image = document.querySelector('.fixture-image');
+    return {
+      scriptRan: document.documentElement.dataset.repositoryScript === 'executed',
+      imageLoaded: Boolean(image && image.complete && image.naturalWidth > 0),
+      stylesheetInlined: !document.querySelector('link[rel~="stylesheet"]') && styles.some(text => text.includes('--fixture-background')),
+      nestedImportInlined: styles.some(text => text.includes('--fixture-shadow') && !/@import\b/i.test(text)),
+      cssResourceInlined: styles.some(text => /data:image\/svg\+xml/i.test(text)),
+      fontResourceInlined: styles.some(text => /data:font\/(?:ttf|woff2?)/i.test(text)),
+      fontLoaded: document.fonts ? document.fonts.check('16px "Repository Fixture"') : false,
+      status: document.querySelector('#fixture-status')?.textContent || '',
+    };
+  });
+}
+
+async function waitForRepositoryFixture(page) {
+  return waitFor('repository-backed resources', async () => {
+    const facts = await inspectRepositoryFixture(page);
+    return facts.scriptRan &&
+      facts.imageLoaded &&
+      facts.stylesheetInlined &&
+      facts.nestedImportInlined &&
+      facts.cssResourceInlined &&
+      facts.fontResourceInlined &&
+      facts.fontLoaded
+      ? facts
+      : false;
+  });
+}
+
 function assertScrollContract(geometry) {
   assert(geometry.host.height > 500, 'The valid fixture did not produce a long Preview surface.');
   assert(
@@ -770,6 +815,7 @@ async function waitForTrustRequired(page) {
     return snapshot.state === 'trust-required' &&
       snapshot.errorCode === 'repository-not-allowed' &&
       snapshot.hasTrust &&
+      snapshot.trustPlacement === 'inline' &&
       !snapshot.hasFrame &&
       snapshot.previewAvailable
       ? snapshot
@@ -1216,20 +1262,31 @@ async function runTrustFlow(context, page, extensionId) {
   let snapshot = await waitForTrustRequired(page);
   assert(snapshot.previewLinkCount === 1, 'The first trust state duplicated the Preview control.');
 
-  await page.locator('[data-ghpreview-trust="decline"]').click();
-  snapshot = await waitFor('declining trust to keep the trust state', async () => {
-    const current = await inspect(page);
-    return current.state === 'trust-required' && current.hasTrust && !current.hasFrame
-      ? current
-      : false;
-  });
+  assert(
+    await page.locator('[data-ghpreview-trust="approve"]').count() === 1,
+    'The trust state did not expose exactly one approval action.',
+  );
+  assert(
+    await page.locator('[data-ghpreview-trust="open-code"]').count() === 1,
+    'The trust state did not expose the Open Code action.',
+  );
+  assert(
+    await page.locator('[data-ghpreview-trust="decline"]').count() === 0,
+    'The trust state still exposes the obsolete no-op dismissal action.',
+  );
+
+  await page.locator('[data-ghpreview-trust="open-code"]').click();
+  snapshot = await waitForNativeView(page, 'code');
+  assertSelected(snapshot, 'Code');
   const declinedPopup = await openSettingsPopup(context, extensionId);
   assert(
     (await declinedPopup.locator('#repository-list > li').count()) === 0,
-    'Declining repository trust must not change the allowlist.',
+    'Opening Code without trusting must not change the allowlist.',
   );
   await declinedPopup.close();
 
+  await clickPreview(page);
+  snapshot = await waitForTrustRequired(page);
   await page.locator('[data-ghpreview-trust="approve"]').click();
   snapshot = await waitForTerminalState(page, 'ready');
   assert(snapshot.hasFrame, 'Explicit repository trust did not continue into Preview.');
@@ -1277,8 +1334,9 @@ async function runTrustFlow(context, page, extensionId) {
     await page.goto(previewUrl(second.href), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     snapshot = await waitForTrustRequired(page);
     assert(snapshot.hasFrame === false, 'A different repository reused the previous Preview frame.');
-    await page.locator('[data-ghpreview-trust="decline"]').click();
-    snapshot = await waitForTrustRequired(page);
+    await page.locator('[data-ghpreview-trust="open-code"]').click();
+    snapshot = await waitForNativeView(page, 'code');
+    assertSelected(snapshot, 'Code');
     await page.goto(initialTestUrl(), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     snapshot = await waitForTerminalState(page, 'ready');
     assert(snapshot.hasFrame, 'Returning to the trusted repository did not restore Preview.');
@@ -1413,6 +1471,12 @@ try {
       });
       assertScrollContract(geometry);
       console.log(JSON.stringify({ step: 'scroll-contract', ...geometry }));
+
+      if (RESOURCE_FLOW) {
+        assert(ENABLE_JAVASCRIPT, 'The repository resource flow must enable JavaScript explicitly.');
+        const resources = await waitForRepositoryFixture(page);
+        console.log(JSON.stringify({ step: 'repository-resources', ...resources }));
+      }
     }
 
     if (RUN_NAVIGATION) {

@@ -10,15 +10,17 @@ without depending on an undocumented manual setup.
 
 ## Scope
 
-- Keep `docs/sample/index.html` as a genuinely self-contained valid fixture.
+- Keep `docs/sample/index.html` as the deterministic inline valid fixture.
+- Add a repository-backed fixture with relative CSS, nested CSS imports, images, fonts, CSS
+  `url(...)`, nested `../` references, and a classic script.
 - Add small English policy fixtures under `docs/sample/invalid/` for:
-  - relative resources;
+  - missing repository resources;
   - external resources;
   - module scripts.
 - Add a compact runtime-error fixture for the sandbox failure path.
 - Extend the existing Playwright smoke test after the settings Popup exists.
-- Add a first-time trust path that starts with an empty allowlist, supports decline, and
-  continues after an explicit inline approval.
+- Add a first-time trust path that starts with an empty allowlist, lets the user return to
+  Code without trusting, and continues after an explicit inline approval.
 - Provide one fixture-matrix command that runs the valid, policy-rejected, and missing-file
   cases without storing a repository URL in the source.
 - Assert `data-preview-state`, `data-preview-error-code`, request ID, and session ID.
@@ -32,7 +34,7 @@ without depending on an undocumented manual setup.
   ```
 
 - Verify that Preview remains available after GitHub SPA DOM replacement.
-- Keep fixture content free of external assets and private context.
+- Keep fixture content free of external network dependencies and private context.
 
 ## Acceptance criteria
 
@@ -41,6 +43,8 @@ without depending on an undocumented manual setup.
   approval adds exactly one trusted entry and continues to `ready`.
 - Each policy fixture reaches a designed failure surface while Preview, Code, and Blame stay
   available.
+- The repository-backed fixture reaches `ready` and proves that supported dependencies are
+  resolved before the document enters the sandbox.
 - The runtime-error fixture reaches `ready` with a designed sandbox warning when inline
   JavaScript is enabled, while the rendered document remains visible.
 - E2E assertions use lifecycle data attributes instead of relying only on visible text.

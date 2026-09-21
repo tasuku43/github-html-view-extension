@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 280" role="img" aria-labelledby="title desc">
+  <title id="title">Repository preview fixture</title>
+  <desc id="desc">A blue and green geometric illustration used by the preview fixture.</desc>
+  <rect width="840" height="280" rx="28" fill="#1f2937"/>
+  <circle cx="140" cy="140" r="82" fill="#1f6feb" opacity=".85"/>
+  <circle cx="280" cy="140" r="82" fill="#3fb950" opacity=".78"/>
+  <path d="M470 64h180a24 24 0 0 1 24 24v104a24 24 0 0 1-24 24H470a24 24 0 0 1-24-24V88a24 24 0 0 1 24-24Z" fill="#0d1117" stroke="#58a6ff" stroke-width="4"/>
+  <path d="m490 118 34 26-34 26m54 0h66" fill="none" stroke="#e6edf3" stroke-linecap="round" stroke-linejoin="round" stroke-width="10"/>
+</svg>

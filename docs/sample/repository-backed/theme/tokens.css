@@ -1,0 +1,13 @@
+@import "./details.css";
+
+:root {
+  --fixture-background: #0d1117;
+  --fixture-surface: #161b22;
+  --fixture-border: #30363d;
+  --fixture-text: #e6edf3;
+  --fixture-muted: #8b949e;
+  --fixture-accent: #58a6ff;
+  --fixture-success: #7ee787;
+  --fixture-success-soft: rgba(63, 185, 80, 0.1);
+  --fixture-code: rgba(110, 118, 129, 0.24);
+}

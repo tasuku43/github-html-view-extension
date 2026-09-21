@@ -164,6 +164,50 @@ test('returns a successful payload with the request ID', async () => {
   assert.equal(result.text, '<h1>ok</h1>');
 });
 
+test('returns repository binary resources as base64 without exposing raw bytes to the page', async () => {
+  const dispatch = createWorker(async () => response({
+    contentType: 'image/svg+xml',
+    body: '<svg></svg>',
+  }));
+
+  const result = await dispatch({
+    type: 'ghpreview:fetch',
+    url: 'https://github.com/example/project/raw/main/assets/preview.svg',
+    mode: 'base64',
+    requestId: 'request-binary',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, 'request-binary');
+  assert.equal(result.contentType, 'image/svg+xml');
+  assert.equal(result.byteLength, 11);
+  assert.equal(result.data, 'PHN2Zz48L3N2Zz4=');
+  assert.equal(result.text, undefined);
+});
+
+test('rejects an unknown resource transfer mode before fetching', async () => {
+  let fetchCount = 0;
+  const dispatch = createWorker(async () => {
+    fetchCount += 1;
+    return response();
+  });
+
+  const result = await dispatch({
+    type: 'ghpreview:fetch',
+    url: 'https://github.com/example/project/raw/main/assets/preview.svg',
+    mode: 'stream',
+    requestId: 'request-mode',
+  });
+
+  assert.deepEqual(plain(result), {
+    ok: false,
+    status: 0,
+    errorCode: 'invalid-mode',
+    requestId: 'request-mode',
+  });
+  assert.equal(fetchCount, 0);
+});
+
 test('rejects a fetch when the master Preview switch is off', async () => {
   let fetchCount = 0;
   const dispatch = createWorker(

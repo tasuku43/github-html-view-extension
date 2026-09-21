@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Repository-backed HTML Preview Fixture</title>
+  <link rel="stylesheet" href="./styles/page.css">
+</head>
+<body>
+  <main class="fixture-shell">
+    <header class="fixture-hero">
+      <p class="fixture-eyebrow">Repository-backed fixture</p>
+      <h1>Dependencies can stay with the document.</h1>
+      <p class="fixture-lead">
+        This page exercises repository-relative CSS, nested stylesheet imports, an image,
+        a font, and a classic script without making a network request from the sandbox.
+      </p>
+      <p class="fixture-status" id="fixture-status" data-fixture-ready>Fixture loaded</p>
+    </header>
+
+    <section class="fixture-card" aria-labelledby="fixture-checks-title">
+      <h2 id="fixture-checks-title">Resolved resource checks</h2>
+      <ul class="fixture-checks">
+        <li><strong>Stylesheet:</strong> loaded from a repository-relative link.</li>
+        <li><strong>Nested import:</strong> loaded through a relative CSS <code>@import</code>.</li>
+        <li><strong>Image:</strong> loaded through a repository-relative reference and a CSS <code>../</code> reference.</li>
+        <li><strong>Font:</strong> referenced from a CSS <code>@font-face</code> rule.</li>
+        <li><strong>Classic script:</strong> enabled only when the capability is on.</li>
+      </ul>
+      <img class="fixture-image" src="./assets/preview.svg" alt="A decorative preview fixture mark">
+      <p class="fixture-script-note" id="fixture-script-note">
+        The repository script has not run.
+      </p>
+    </section>
+  </main>
+  <script src="./scripts/behavior.js"></script>
+</body>
+</html>

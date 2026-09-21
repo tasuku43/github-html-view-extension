@@ -7,7 +7,7 @@ const window = {};
 loadScript('inline.js', { window });
 const { validateDocument } = window.GHPREVIEW.inline;
 
-test('accepts a self-contained document with inline CSS and safe passive data', () => {
+test('accepts an inline document with inline CSS and safe passive data', () => {
   const result = validateDocument(`
     <!doctype html>
     <style>body { color: #0969da; }</style>
@@ -17,16 +17,13 @@ test('accepts a self-contained document with inline CSS and safe passive data', 
   assert.deepEqual(result.issues, []);
 });
 
-test('rejects relative resources before rendering', () => {
+test('allows repository-relative resources through structural validation', () => {
   const result = validateDocument(`
     <link rel="stylesheet" href="styles.css">
     <img src="images/example.png" alt="relative">
   `);
-  assert.equal(result.valid, false);
-  assert.deepEqual(
-    result.issues.map(issue => issue.code),
-    ['link-element', 'relative-resource'],
-  );
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
 });
 
 test('rejects external resources before rendering', () => {
@@ -62,8 +59,6 @@ test('rejects unsupported active elements and CSS loading paths', () => {
   assert.equal(result.valid, false);
   assert.deepEqual(result.issues.map(issue => issue.code), [
     'embedded-element',
-    'css-import',
-    'relative-resource',
   ]);
 });
 
@@ -81,15 +76,52 @@ test('rejects network APIs, unsafe navigation, and unsafe data URLs', () => {
   ].sort());
 });
 
-test('reports a safe location for a relative image without exposing its path', () => {
-  const result = validateDocument('<img src="assets/preview.png" alt="fixture">');
+test('rejects root-relative resources with a safe location', () => {
+  const result = validateDocument('<img src="/assets/preview.png" alt="fixture">');
   assert.equal(result.valid, false);
-  assert.equal(result.issues[0].message, 'Relative image sources are not supported.');
+  assert.equal(
+    result.issues[0].message,
+    'Root-relative image sources are not supported because the repository ref is ambiguous.',
+  );
   assert.deepEqual(result.issues[0].location, {
     line: 1,
     column: 1,
     target: 'img[src]',
-    detail: 'relative image sources',
+    detail: 'root-relative image sources',
   });
   assert.doesNotMatch(JSON.stringify(result.issues[0]), /assets\/preview\.png/);
+});
+
+test('resolves branch, tag, and commit-relative references within the raw repository route', () => {
+  const resolve = window.GHPREVIEW.inline.resolveRepositoryUrl;
+  const bases = [
+    'https://github.com/example/project/raw/main/docs/sample/index.html',
+    'https://github.com/example/project/raw/release/v1/docs/sample/index.html',
+    'https://github.com/example/project/raw/0123456789abcdef/docs/sample/index.html',
+  ];
+  for (const base of bases) {
+    const result = resolve('../assets/preview.svg', base);
+    assert.equal(result.ok, true);
+    assert.match(result.url, /^https:\/\/github\.com\/example\/project\/raw\//);
+    assert.doesNotMatch(result.url, /\.\./);
+  }
+});
+
+test('rejects ambiguous root-relative and external dependency references', () => {
+  const resolve = window.GHPREVIEW.inline.resolveRepositoryUrl;
+  assert.deepEqual(
+    resolve('/assets/preview.svg', 'https://github.com/example/project/raw/main/index.html'),
+    { ok: false, code: 'root-relative-resource' },
+  );
+  assert.deepEqual(
+    resolve('https://cdn.example.test/preview.css', 'https://github.com/example/project/raw/main/index.html'),
+    { ok: false, code: 'external-resource' },
+  );
+});
+
+test('accepts safe passive SVG and font data URLs but rejects active SVG content', () => {
+  const { isSafePassiveDataUrl } = window.GHPREVIEW.inline;
+  assert.equal(isSafePassiveDataUrl('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"></svg>'), true);
+  assert.equal(isSafePassiveDataUrl('data:font/ttf;base64,AAAA'), true);
+  assert.equal(isSafePassiveDataUrl('data:image/svg+xml,<svg><script>alert(1)</script></svg>'), false);
 });

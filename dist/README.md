@@ -8,13 +8,15 @@ root's [product specification](../docs/specification.md).
 
 - Preview explicitly trusted `.html`, `.htm`, and `.xhtml` files on GitHub Blob and Blame pages.
 - Keep `Preview`, `Code`, and `Blame` available in GitHub's existing file-view control.
-- Render only self-contained HTML in the extension-bundled `sandbox.html` page.
-- Run inline classic JavaScript only when the Popup capability is enabled.
+- Resolve supported repository-relative stylesheets, images, fonts, CSS resources, and classic
+  scripts before rendering them in the extension-bundled `sandbox.html` page.
+- Run inline or resolved repository-relative classic JavaScript only when the Popup capability
+  is enabled.
 - Keep forms visible and editable while native submission and popup creation remain disabled.
 - Show designed English failure surfaces without exposing source HTML or private context.
 
-Markdown, SVG, notebooks, pull-request file views, GitHub Enterprise, wildcard allowlists,
-and repository-side configuration are outside the product scope.
+Markdown, top-level SVG files, notebooks, pull-request file views, GitHub Enterprise, wildcard
+allowlists, and repository-side configuration are outside the product scope.
 
 ## Load the extension
 
@@ -69,7 +71,8 @@ the extension-bundled `sandbox.html` page with a session query parameter; it is 
 `about:blank`, `srcdoc`, or a content-script-generated bootstrap. The iframe never receives
 `allow-same-origin`.
 
-The HTML policy rejects relative and external resources, module scripts, embedded frames,
+The HTML policy rejects external or ambiguous resources, module scripts, embedded frames,
 network APIs, unsafe navigation schemes, and other active network paths before rendering.
-Only safe passive `data:` media is accepted. The Worker rechecks the exact repository
-allowlist before every fetch.
+Repository-relative dependencies are fetched by the Worker, validated, and rewritten into the
+document before it enters the sandbox. Only safe passive `data:` media is accepted. The Worker
+rechecks the exact repository allowlist before every fetch.

@@ -6,15 +6,16 @@ verifiable.
 
 ## Product
 
-The extension previews explicitly trusted `.html`, `.htm`, and `.xhtml` files on GitHub Blob
-and Blame views. It adds `Preview` beside GitHub's `Code` and `Blame` controls and keeps all
-three available. Markdown is outside this extension's scope.
+The extension previews explicitly trusted `.html`, `.htm`, and `.xhtml` files plus safely
+resolved repository-relative dependencies on GitHub Blob and Blame views. It adds `Preview`
+beside GitHub's `Code` and `Blame` controls and keeps all three available. Markdown is outside
+this extension's scope.
 
 Settings are disabled by default. The allowlist contains exact `owner/repository` entries;
 wildcards are rejected and matching is case-insensitive. When Preview is enabled, an
 untrusted repository shows an explicit trust action in the Preview surface; the Popup can
-still review or remove trusted entries. Relative and external resources are policy
-violations, not resources to inline.
+still review or remove trusted entries. Repository-relative resources may be resolved and
+inlined; external, root-relative, and ambiguous resources remain policy violations.
 
 ## Security boundaries
 

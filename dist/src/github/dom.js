@@ -596,13 +596,13 @@
       details.onTrust,
     );
     trustButton.dataset.ghpreviewTrust = 'approve';
-    const declineButton = createAction(
-      'Not now',
+    const openCodeButton = createAction(
+      'Open Code',
       'ghpreview-trust-button ghpreview-trust-button-secondary',
-      details.onDecline,
+      details.onOpenCode,
     );
-    declineButton.dataset.ghpreviewTrust = 'decline';
-    actions.append(trustButton, declineButton);
+    openCodeButton.dataset.ghpreviewTrust = 'open-code';
+    actions.append(trustButton, openCodeButton);
     surface.append(actions);
 
     const note = document.createElement('p');
@@ -1076,10 +1076,11 @@
   /**
    * Prepare the validated HTML for the sandbox.
    *
-   * Validation has already rejected every relative or external resource. This step must
-   * not fetch or inline anything; it only removes repository scripts and inline handlers
-   * when the corresponding capability is disabled, removes a document base element that
-   * could change navigation resolution, and adds the parent height reporter.
+   * Repository-relative dependencies have already been fetched and rewritten by the
+   * content controller. This step must not fetch anything; it only removes repository
+   * scripts and inline handlers when the corresponding capability is disabled, removes a
+   * document base element that could change navigation resolution, and adds the parent
+   * height reporter.
    */
   function applyCapabilities(doc, capabilities = {}) {
     if (capabilities.javascript === true) {

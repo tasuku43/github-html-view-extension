@@ -47,8 +47,9 @@ repository, and only after the normalized local settings allow that repository.
   extension APIs, GitHub cookies, or the GitHub page DOM.
 - `web_accessible_resources` exposes only the sandbox assets and extension UI stylesheet to
   GitHub pages.
-- The HTML policy rejects external resources, module scripts, active embeds, unsafe URLs,
-  and other network-capable constructs before rendering.
+- The HTML policy resolves bounded repository-relative resources before rendering and rejects
+  external or ambiguous resources, module scripts, active embeds, unsafe URLs, and other
+  network-capable constructs.
 
 Result: the current permission set and sandbox boundary are acceptable for this milestone.
 Any new host, permission, sandbox token, or external resource must receive a separate

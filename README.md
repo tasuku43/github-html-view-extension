@@ -1,7 +1,8 @@
 # GitHub HTML Preview
 
-This repository contains a Chrome MV3 extension that previews explicitly trusted, self-contained
-HTML files on GitHub. The product contract is [docs/specification.md](docs/specification.md).
+This repository contains a Chrome MV3 extension that previews HTML files and their safely
+resolvable repository-relative resources from explicitly trusted GitHub repositories. The
+product contract is [docs/specification.md](docs/specification.md).
 The product name is provisional and is intentionally not fixed here.
 
 ## Current runtime
@@ -13,8 +14,8 @@ repository HTML in separate execution boundaries.
 
 The supported file extensions are `.html`, `.htm`, and `.xhtml`. Markdown, GitHub
 Enterprise, pull-request file views, wildcard allowlists, and repository-side settings are
-outside the product scope. Only self-contained HTML is accepted: relative or external
-resources are rejected before rendering.
+outside the product scope. Repository-relative stylesheets, images, fonts, CSS resources, and
+classic scripts can be resolved before rendering; external and ambiguous resources are rejected.
 
 ## Verify the repository
 

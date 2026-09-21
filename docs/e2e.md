@@ -18,7 +18,7 @@ npx playwright install chromium
 
 ## Run against a ready fixture
 
-Use the repository's canonical self-contained fixture. After pushing the repository, replace
+Use the repository's canonical inline fixture. After pushing the repository, replace
 the owner and repository placeholders with the public GitHub URL:
 
 ```text
@@ -43,8 +43,8 @@ Blame -> Preview
 Blame -> Code
 ```
 
-To verify first-time trust, decline, already-trusted Preview, removal, re-trust, and duplicate
-prevention in one isolated browser profile:
+To verify first-time trust, returning to Code without trusting, already-trusted Preview,
+removal, re-trust, and duplicate prevention in one isolated browser profile:
 
 ```sh
 GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/path/to/fixture.html" \
@@ -62,14 +62,36 @@ GHPREVIEW_E2E_SECOND_URL="https://github.com/another-owner/another-repository/bl
 npm run e2e
 ```
 
-For a page that is expected to be rejected by the HTML policy, assert the failure instead:
+For a page that is expected to fail repository resource resolution, assert the failure instead:
 
 ```sh
 GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/path/to/invalid.html" \
 GHPREVIEW_E2E_EXPECT_STATE=failed \
-GHPREVIEW_E2E_EXPECT_ERROR_CODE=html-policy-violation \
+GHPREVIEW_E2E_EXPECT_ERROR_CODE=resource-resolution-failed \
 npm run e2e
 ```
+
+The repository-backed fixture exercises a relative stylesheet, nested CSS imports, a relative
+image, a CSS `url(...)`, a relative font, nested `../` references, and a repository-relative
+classic script. The fixture matrix runs it with JavaScript enabled:
+
+```sh
+npm run e2e:fixtures
+```
+
+The matrix derives its base URL from the repository's `origin`, so the fixture must be pushed
+before the browser check. To verify the same dependency graph against a branch, tag, or commit,
+set `GHPREVIEW_E2E_REF` to that ref before running the matrix:
+
+```sh
+GHPREVIEW_E2E_REF="example-branch" npm run e2e:fixtures
+GHPREVIEW_E2E_REF="v1.0.0" npm run e2e:fixtures
+GHPREVIEW_E2E_REF="0123456789abcdef0123456789abcdef01234567" npm run e2e:fixtures
+```
+
+The browser uses the signed-in GitHub session already available to the extension. It does not
+configure or pass an extension-managed token; private repository checks therefore require a
+browser profile that can already read the selected repository.
 
 To run the valid fixture, the direct Code- and Blame-start regressions, all policy fixtures,
 the runtime-error fixture, and the missing-file regression as one matrix against this repository:
@@ -123,13 +145,18 @@ npm run e2e
 - a terminal Preview state is reached (`ready`, `failed`, `disabled`, or `trust-required`);
 - an untrusted repository reaches `trust-required` without a fetch or sandbox frame, and an
   explicit trust action continues into `ready`;
-- declining trust leaves the Popup allowlist empty; removing trust returns the current page to
-  `trust-required`; repeated trust and Preview selection keep exactly one entry and one control;
+- opening Code without trusting leaves the Popup allowlist empty; removing trust returns the
+  current page to `trust-required`; repeated trust and Preview selection keep exactly one
+  entry and one control;
 - when `GHPREVIEW_E2E_SECOND_URL` is provided, navigation to that repository gets its own trust
   decision and returning to the original repository restores its existing trust;
 - `data-preview-state`, `data-preview-error-code`, `data-preview-request-id`, and
   `data-preview-session-id` are observable;
 - the valid fixture reaches a long Preview surface without an unexpected inner scrollbar;
+- the repository-backed fixture reaches `ready`, loads its relative CSS, image, and font
+  resources, and runs the classic script only when the JavaScript capability is enabled;
+- missing and external dependencies reach `resource-resolution-failed` without rendering a
+  partial document;
 - the runtime-error fixture reaches `ready` with a non-destructive
   `sandbox-runtime-error` warning when inline JavaScript is enabled;
 - Preview remains present while Code and Blame are selected;
