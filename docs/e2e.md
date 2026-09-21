@@ -5,8 +5,9 @@ extension. It launches an isolated persistent browser context, loads `dist/` as 
 extension, configures the target repository in the extension service worker, and checks the
 real GitHub page.
 
-The test uses the URL supplied at runtime. Do not commit a repository URL, account name, or
-other private browsing context to the repository.
+The fixture matrix uses the current repository's `origin` remote and the `main` ref by
+default. Do not commit a repository URL, account name, or other private browsing context to
+the repository.
 
 Playwright is a development dependency. Install its browser once when the local cache does
 not already contain Chromium:
@@ -50,6 +51,17 @@ GHPREVIEW_E2E_EXPECT_ERROR_CODE=html-policy-violation \
 npm run e2e
 ```
 
+To run the valid fixture, all policy fixtures, the runtime-error fixture, and the missing-file
+regression as one matrix against this repository:
+
+```sh
+npm run e2e:fixtures
+```
+
+Set `GHPREVIEW_E2E_HEADLESS=1` when running in a headless-capable browser. The optional
+`GHPREVIEW_E2E_FIXTURE_ROOT` override is reserved for validating another public fixture copy;
+normal project verification should use the current repository automatically.
+
 To verify that a GitHub 404 page does not receive a Preview control, use a deliberately
 missing HTML path in the same repository:
 
@@ -65,13 +77,17 @@ npm run e2e
 - a terminal Preview state is reached (`ready`, `failed`, or `disabled`);
 - `data-preview-state`, `data-preview-error-code`, `data-preview-request-id`, and
   `data-preview-session-id` are observable;
+- the valid fixture reaches a long Preview surface without an unexpected inner scrollbar;
+- the runtime-error fixture reaches `failed` with `sandbox-runtime-error` when inline
+  JavaScript is enabled;
 - Preview remains present while Code and Blame are selected;
 - Blame -> Code ends at the Blob source URL with `?plain=1`;
-- the extension's Preview control remains available after GitHub SPA navigation.
+- the extension's Preview control remains available exactly once after GitHub SPA navigation;
 - a GitHub missing-file response does not receive a Preview control.
 
-The same run verifies the Popup-to-storage contract before opening GitHub, so a Popup
-regression is visible rather than being hidden by direct storage setup.
+The same run verifies the Popup-to-storage contract before opening GitHub, including invalid
+repository feedback, duplicate rejection, removal, the master-switch-off state, and re-enable.
+A Popup regression is visible rather than being hidden by direct storage setup.
 
 The default run keeps the browser visible because extension loading is more reliable in a
 persistent headed context. Set `GHPREVIEW_E2E_HEADLESS=1` only when the selected browser

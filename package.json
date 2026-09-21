@@ -4,7 +4,8 @@
   "description": "Incremental development workspace for a GitHub HTML preview extension.",
   "scripts": {
     "test": "npm --prefix dist test",
-    "e2e": "node scripts/e2e-chrome.mjs"
+    "e2e": "node scripts/e2e-chrome.mjs",
+    "e2e:fixtures": "node scripts/e2e-fixtures.mjs"
   },
   "devDependencies": {
     "playwright": "^1.62.1"

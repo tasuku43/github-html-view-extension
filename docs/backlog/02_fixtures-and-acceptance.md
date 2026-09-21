@@ -1,6 +1,6 @@
 # 02 — Deterministic Fixtures and Browser Acceptance
 
-Status: Planned  
+Status: Done
 Priority: P1 — required for confident maintenance
 
 ## Goal
@@ -15,9 +15,10 @@ without depending on an undocumented manual setup.
   - relative resources;
   - external resources;
   - module scripts.
-- Add a compact runtime-error fixture or a deterministic test seam when the runtime-error
-  path is ready to be tested.
+- Add a compact runtime-error fixture for the sandbox failure path.
 - Extend the existing Playwright smoke test after the settings Popup exists.
+- Provide one fixture-matrix command that runs the valid, policy-rejected, and missing-file
+  cases without storing a repository URL in the source.
 - Assert `data-preview-state`, `data-preview-error-code`, request ID, and session ID.
 - Verify the navigation contract:
 
@@ -36,7 +37,10 @@ without depending on an undocumented manual setup.
 - One valid fixture reaches `ready` in a public GitHub Blob page.
 - Each policy fixture reaches a designed failure surface while Preview, Code, and Blame stay
   available.
+- The runtime-error fixture reaches a designed sandbox failure surface when inline JavaScript
+  is enabled.
 - E2E assertions use lifecycle data attributes instead of relying only on visible text.
+- The valid fixture has no unexpected inner scrollbar after height synchronization.
 - The test can be run with a runtime URL and does not commit a personal repository URL.
 - The preview surface has one intentional scrolling surface and does not leave GitHub line
   numbers or source code behind it.

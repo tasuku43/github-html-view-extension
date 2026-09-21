@@ -20,6 +20,7 @@ const TARGET_URL = process.env.GHPREVIEW_E2E_URL;
 const EXPECTED_STATE = process.env.GHPREVIEW_E2E_EXPECT_STATE || '';
 const EXPECTED_ERROR_CODE = process.env.GHPREVIEW_E2E_EXPECT_ERROR_CODE || '';
 const EXPECT_NO_PREVIEW = process.env.GHPREVIEW_E2E_EXPECT_NO_PREVIEW === '1';
+const ENABLE_JAVASCRIPT = process.env.GHPREVIEW_E2E_ENABLE_JAVASCRIPT === '1';
 const RUN_NAVIGATION = process.env.GHPREVIEW_E2E_NAVIGATION !== '0';
 const HEADLESS = process.env.GHPREVIEW_E2E_HEADLESS === '1';
 const DEBUG = process.env.GHPREVIEW_E2E_DEBUG === '1';
@@ -105,8 +106,7 @@ async function findExtensionWorker(context) {
   });
 }
 
-async function configureSettingsThroughPopup(context, worker) {
-  const extensionId = new URL(worker.url()).hostname;
+async function openSettingsPopup(context, extensionId) {
   const popup = await context.newPage();
   await popup.goto(`chrome-extension://${extensionId}/popup.html`, {
     waitUntil: 'domcontentloaded',
@@ -116,6 +116,12 @@ async function configureSettingsThroughPopup(context, worker) {
     state: 'attached',
     timeout: TIMEOUT,
   });
+  return popup;
+}
+
+async function configureSettingsThroughPopup(context, worker) {
+  const extensionId = new URL(worker.url()).hostname;
+  const popup = await openSettingsPopup(context, extensionId);
 
   const firstRun = await popup.evaluate(() => ({
     previewEnabled: document.querySelector('#preview-enabled').checked,
@@ -142,11 +148,43 @@ async function configureSettingsThroughPopup(context, worker) {
   );
   assert(firstRun.repositoryCount === 0, 'A fresh profile should have no repositories.');
 
+  await popup.locator('#repository-input').fill('owner/*');
+  await waitFor('wildcard repository error', async () => {
+    return (await popup.locator('#repository-error').innerText()).includes('Wildcards are not supported');
+  });
+  assert(
+    (await popup.locator('#repository-list > li').count()) === 0,
+    'An invalid repository must not be stored.',
+  );
+
   await popup.locator('#repository-input').fill(repository);
   await popup.locator('.add-button').click();
   const repositoryItem = popup.locator(`[data-repository="${repository}"]`);
   await repositoryItem.waitFor({ state: 'attached', timeout: TIMEOUT });
-  const repositoryPresentation = await repositoryItem.locator('.repository-name').evaluate(element => ({
+
+  await popup.locator('#repository-input').fill(repository);
+  await popup.locator('.add-button').click();
+  await waitFor('duplicate repository error', async () => {
+    return (await popup.locator('#repository-error').innerText()).includes('already approved');
+  });
+  assert(
+    (await popup.locator('#repository-list > li').count()) === 1,
+    'A duplicate repository must not create a second entry.',
+  );
+
+  await repositoryItem.locator('[data-remove-repository]').click();
+  await waitFor('repository removal', async () => {
+    return (await popup.locator('#repository-list > li').count()) === 0;
+  });
+
+  await popup.locator('#repository-input').fill(repository);
+  await popup.locator('.add-button').click();
+  await popup.locator(`[data-repository="${repository}"]`).waitFor({
+    state: 'attached',
+    timeout: TIMEOUT,
+  });
+  const restoredRepositoryItem = popup.locator(`[data-repository="${repository}"]`);
+  const repositoryPresentation = await restoredRepositoryItem.locator('.repository-name').evaluate(element => ({
     fullName: element.dataset.fullName,
     title: element.getAttribute('title'),
     ariaLabel: element.getAttribute('aria-label'),
@@ -163,7 +201,7 @@ async function configureSettingsThroughPopup(context, worker) {
   assert(repositoryPresentation.describedBy === 'repository-tooltip', 'Repository name is not connected to its tooltip.');
   assert(repositoryPresentation.textOverflow === 'ellipsis', 'Repository names must remain truncated with an ellipsis.');
   assert(repositoryPresentation.whiteSpace === 'nowrap', 'Repository names must stay on one line before inspection.');
-  const repositoryName = repositoryItem.locator('.repository-name');
+  const repositoryName = restoredRepositoryItem.locator('.repository-name');
   await repositoryName.hover();
   await waitFor('repository tooltip to appear', async () => {
     return popup.locator('#repository-tooltip.is-visible').count();
@@ -172,14 +210,38 @@ async function configureSettingsThroughPopup(context, worker) {
     (await popup.locator('#repository-tooltip').innerText()) === repository,
     'Repository tooltip does not show the complete value.',
   );
-  await popup.locator('#preview-enabled').check();
-  await waitFor('Popup settings to become active', async () => {
-    return popup.locator('[data-settings-surface][data-preview-enabled="true"]').count();
+  await popup.close();
+  return extensionId;
+}
+
+async function setPreviewEnabledThroughPopup(context, extensionId, enabled) {
+  const popup = await openSettingsPopup(context, extensionId);
+  const control = popup.locator('#preview-enabled');
+  if (enabled) {
+    await control.check();
+  } else {
+    await control.uncheck();
+  }
+  await waitFor('Popup master switch to settle', async () => {
+    return popup.locator(
+      `[data-settings-surface][data-preview-enabled="${String(enabled)}"]`,
+    ).count();
   });
-  assert(
-    !(await popup.locator('#capability-javascript').isDisabled()),
-    'Capabilities should be configurable after Preview is enabled.',
-  );
+  if (enabled) {
+    assert(
+      !(await popup.locator('#capability-javascript').isDisabled()),
+      'Capabilities should be configurable after Preview is enabled.',
+    );
+    if (ENABLE_JAVASCRIPT) {
+      await popup.locator('#capability-javascript').check();
+      await waitFor('JavaScript capability to be saved', async () => {
+        return popup.locator('[data-settings-surface][data-capability-javascript="true"]').count();
+      });
+    }
+    await waitFor('Popup settings to be saved', async () => {
+      return popup.locator('[data-settings-surface][data-settings-state="saved"]').count();
+    });
+  }
   await popup.close();
 }
 
@@ -223,6 +285,7 @@ async function inspect(page) {
         error?.dataset.previewSessionId ||
         null,
       previewAvailable: Boolean(document.querySelector('[data-ghpreview-link]')),
+      previewLinkCount: document.querySelectorAll('[data-ghpreview-link]').length,
       views,
       hasFrame: Boolean(frame),
       hasError: Boolean(error),
@@ -230,8 +293,57 @@ async function inspect(page) {
   });
 }
 
+async function inspectFrameGeometry(page) {
+  const host = await page.locator('#ghpreview-frame').evaluate(frame => ({
+    height: frame.getBoundingClientRect().height,
+    clientHeight: frame.clientHeight,
+  }));
+  const sandbox = page.frames().find(frame => frame.url().includes('/sandbox.html'));
+  if (!sandbox) {
+    throw new Error('The sandbox frame was not available for geometry verification.');
+  }
+  const documentMetrics = await sandbox.evaluate(() => {
+    const documentElement = document.documentElement;
+    const body = document.body;
+    return {
+      documentHeight: Math.max(
+        documentElement ? documentElement.scrollHeight : 0,
+        documentElement ? documentElement.offsetHeight : 0,
+        body ? body.scrollHeight : 0,
+        body ? body.offsetHeight : 0,
+      ),
+      viewportHeight: documentElement ? documentElement.clientHeight : 0,
+    };
+  });
+  return { host, document: documentMetrics };
+}
+
+function assertScrollContract(geometry) {
+  assert(geometry.host.height > 500, 'The valid fixture did not produce a long Preview surface.');
+  assert(
+    geometry.host.clientHeight + 16 >= geometry.document.documentHeight,
+    'The Preview iframe is shorter than the rendered document.',
+  );
+  assert(
+    geometry.document.viewportHeight + 16 >= geometry.document.documentHeight,
+    'The rendered document has an unexpected internal vertical scrollbar.',
+  );
+}
+
 async function waitForPreviewControl(page) {
   await page.locator('[data-ghpreview-link]').waitFor({ state: 'attached', timeout: TIMEOUT });
+}
+
+async function waitForPreviewDisabled(page) {
+  return waitFor('Preview to remain disabled', async () => {
+    const snapshot = await inspect(page);
+    return ['disabled', 'idle'].includes(snapshot.state) &&
+      !snapshot.previewAvailable &&
+      !snapshot.hasFrame &&
+      !snapshot.hasError
+      ? snapshot
+      : false;
+  });
 }
 
 async function waitForTerminalState(page, expectedState = EXPECTED_STATE) {
@@ -310,6 +422,7 @@ async function runNavigationContract(page) {
   let snapshot = await inspect(page);
   assertSelected(snapshot, 'Preview');
   assert(snapshot.previewAvailable, 'Preview control is missing before navigation.');
+  assert(snapshot.previewLinkCount === 1, 'Preview control is duplicated before navigation.');
 
   await clickView(page, 'Code');
   snapshot = await waitForView(
@@ -321,6 +434,7 @@ async function runNavigationContract(page) {
     'Preview -> Code',
   );
   assertSelected(snapshot, 'Code');
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Preview -> Code.');
 
   await clickView(page, 'Blame');
   snapshot = await waitForView(
@@ -329,6 +443,7 @@ async function runNavigationContract(page) {
     'Code -> Blame',
   );
   assertSelected(snapshot, 'Blame');
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Code -> Blame.');
 
   await clickPreview(page);
   snapshot = await waitForView(
@@ -341,6 +456,7 @@ async function runNavigationContract(page) {
     'Blame -> Preview',
   );
   assertSelected(snapshot, 'Preview');
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Blame -> Preview.');
 
   await clickView(page, 'Blame');
   snapshot = await waitForView(
@@ -349,6 +465,7 @@ async function runNavigationContract(page) {
     'Preview -> Blame',
   );
   assertSelected(snapshot, 'Blame');
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Preview -> Blame.');
 
   await clickView(page, 'Code');
   snapshot = await waitForView(
@@ -361,6 +478,7 @@ async function runNavigationContract(page) {
     'Blame -> Code',
   );
   assertSelected(snapshot, 'Code');
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Blame -> Code.');
 }
 
 const browserPath = findBrowserPath();
@@ -394,7 +512,13 @@ try {
   page.on('pageerror', error => logs.push({ type: 'pageerror', text: error.message }));
 
   const worker = await findExtensionWorker(context);
-  await configureSettingsThroughPopup(context, worker);
+  const extensionId = await configureSettingsThroughPopup(context, worker);
+  await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+
+  const disabled = await waitForPreviewDisabled(page);
+  console.log(JSON.stringify({ step: 'master-switch-off', ...disabled }));
+
+  await setPreviewEnabledThroughPopup(context, extensionId, true);
   await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
   if (EXPECT_NO_PREVIEW) {
@@ -424,6 +548,18 @@ try {
         initial.errorCode === EXPECTED_ERROR_CODE,
         'Expected error code ' + EXPECTED_ERROR_CODE + ', got ' + initial.errorCode + '.',
       );
+    }
+
+    if (initial.state === 'ready') {
+      const geometry = await waitFor('Preview frame geometry', async () => {
+        try {
+          return await inspectFrameGeometry(page);
+        } catch {
+          return false;
+        }
+      });
+      assertScrollContract(geometry);
+      console.log(JSON.stringify({ step: 'scroll-contract', ...geometry }));
     }
 
     if (RUN_NAVIGATION) {

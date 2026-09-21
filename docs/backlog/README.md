@@ -4,7 +4,7 @@ The backlog is ordered by the smallest product gaps that provide the most user v
 Each numbered item should produce a browser-verifiable checkpoint before the next item
 starts.
 
-- `01_settings-popup.md` is the next product milestone.
+- `03_release-gates.md` is the next product milestone.
 - `02_fixtures-and-acceptance.md` makes the behavior reproducible and reviewable.
 - `03_release-gates.md` prepares the project for a public release.
 - `90_deferred-architecture.md` records ideas that are intentionally out of scope until
@@ -31,7 +31,7 @@ commit that changes the work state.
 
 | Item | Priority | Status | Next evidence |
 | --- | --- | --- | --- |
-| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | In Progress | Popup-to-GitHub E2E |
-| [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Planned | Valid and policy fixture runs |
+| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | Done | Popup-to-GitHub E2E |
+| [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Done | Fixture matrix, scroll, and SPA checks |
 | [03 — Minimal Release Gates](03_release-gates.md) | P1 | Planned | Fresh-checkout verification |
 | [90 — Deferred Architecture Work](90_deferred-architecture.md) | P2 | Deferred | A measured maintenance need |

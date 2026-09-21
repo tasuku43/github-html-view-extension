@@ -1,6 +1,6 @@
 # 01 — Action Popup and Settings
 
-Status: In Progress
+Status: Done
 Priority: P0 — required for the product contract
 
 ## Goal
