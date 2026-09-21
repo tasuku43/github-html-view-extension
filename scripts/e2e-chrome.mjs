@@ -128,7 +128,34 @@ async function configureSettingsThroughPopup(context, worker) {
 
   await popup.locator('#repository-input').fill(repository);
   await popup.locator('.add-button').click();
-  await popup.locator(`[data-repository="${repository}"]`).waitFor({ state: 'attached', timeout: TIMEOUT });
+  const repositoryItem = popup.locator(`[data-repository="${repository}"]`);
+  await repositoryItem.waitFor({ state: 'attached', timeout: TIMEOUT });
+  const repositoryPresentation = await repositoryItem.locator('.repository-name').evaluate(element => ({
+    fullName: element.dataset.fullName,
+    title: element.getAttribute('title'),
+    ariaLabel: element.getAttribute('aria-label'),
+    describedBy: element.getAttribute('aria-describedby'),
+    textOverflow: getComputedStyle(element.querySelector('code')).textOverflow,
+    whiteSpace: getComputedStyle(element.querySelector('code')).whiteSpace,
+  }));
+  assert(repositoryPresentation.fullName === repository, 'Repository full value is not attached to the name surface.');
+  assert(repositoryPresentation.title === null, 'Repository name must not use the delayed native title tooltip.');
+  assert(
+    repositoryPresentation.ariaLabel === 'Full repository name: ' + repository,
+    'Repository name does not expose an accessible full value.',
+  );
+  assert(repositoryPresentation.describedBy === 'repository-tooltip', 'Repository name is not connected to its tooltip.');
+  assert(repositoryPresentation.textOverflow === 'ellipsis', 'Repository names must remain truncated with an ellipsis.');
+  assert(repositoryPresentation.whiteSpace === 'nowrap', 'Repository names must stay on one line before inspection.');
+  const repositoryName = repositoryItem.locator('.repository-name');
+  await repositoryName.hover();
+  await waitFor('repository tooltip to appear', async () => {
+    return popup.locator('#repository-tooltip.is-visible').count();
+  });
+  assert(
+    (await popup.locator('#repository-tooltip').innerText()) === repository,
+    'Repository tooltip does not show the complete value.',
+  );
   await popup.locator('#preview-enabled').check();
   await waitFor('Popup settings to become active', async () => {
     return popup.locator('[data-settings-surface][data-preview-enabled="true"]').count();

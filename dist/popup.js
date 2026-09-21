@@ -22,12 +22,90 @@
   const repositoryInput = document.getElementById('repository-input');
   const repositoryError = document.getElementById('repository-error');
   const repositoryList = document.getElementById('repository-list');
+  const repositoryTooltip = document.getElementById('repository-tooltip');
   const repositoryEmpty = document.getElementById('repository-empty');
   const footerStatus = document.getElementById('footer-status');
   const activeStatus = document.getElementById('active-status');
 
   let current = settingsApi.createDefault();
   let saveVersion = 0;
+  let tooltipTarget = null;
+
+  function hideRepositoryTooltip(target) {
+    if (target && tooltipTarget !== target) {
+      return;
+    }
+    tooltipTarget = null;
+    repositoryTooltip.classList.remove('is-visible');
+    repositoryTooltip.setAttribute('aria-hidden', 'true');
+    repositoryTooltip.hidden = true;
+  }
+
+  function showRepositoryTooltip(target) {
+    const value = target.dataset.fullName;
+    if (!value) {
+      return;
+    }
+
+    tooltipTarget = target;
+    repositoryTooltip.textContent = value;
+    repositoryTooltip.hidden = false;
+    repositoryTooltip.setAttribute('aria-hidden', 'false');
+    repositoryTooltip.style.maxWidth = Math.min(280, window.innerWidth - 24) + 'px';
+
+    const targetRect = target.getBoundingClientRect();
+    const tooltipRect = repositoryTooltip.getBoundingClientRect();
+    const viewportPadding = 8;
+    const left = Math.min(
+      Math.max(viewportPadding, targetRect.left),
+      Math.max(viewportPadding, window.innerWidth - tooltipRect.width - viewportPadding),
+    );
+    const aboveTop = targetRect.top - tooltipRect.height - 7;
+    const belowTop = targetRect.bottom + 7;
+    const top = aboveTop >= viewportPadding
+      ? aboveTop
+      : Math.min(
+          Math.max(viewportPadding, belowTop),
+          Math.max(viewportPadding, window.innerHeight - tooltipRect.height - viewportPadding),
+        );
+
+    repositoryTooltip.style.left = Math.round(left) + 'px';
+    repositoryTooltip.style.top = Math.round(top) + 'px';
+    requestAnimationFrame(() => {
+      if (tooltipTarget === target) {
+        repositoryTooltip.classList.add('is-visible');
+      }
+    });
+  }
+
+  function bindRepositoryName(name) {
+    let hovered = false;
+    let focused = false;
+    const updateTooltip = () => {
+      if (hovered || focused) {
+        showRepositoryTooltip(name);
+      } else {
+        hideRepositoryTooltip(name);
+      }
+    };
+
+    name.addEventListener('mouseenter', () => {
+      hovered = true;
+      updateTooltip();
+    });
+    name.addEventListener('mouseleave', () => {
+      hovered = false;
+      updateTooltip();
+    });
+    name.addEventListener('focus', () => {
+      focused = true;
+      updateTooltip();
+    });
+    name.addEventListener('blur', () => {
+      focused = false;
+      updateTooltip();
+    });
+  }
 
   function setStatus(message, state = 'ready') {
     footerStatus.textContent = message;
@@ -54,6 +132,7 @@
   }
 
   function renderRepositories() {
+    hideRepositoryTooltip();
     repositoryList.replaceChildren();
     repositorySummary.textContent =
       current.repositories.length +
@@ -68,8 +147,16 @@
       dot.className = 'repo-dot';
       dot.setAttribute('aria-hidden', 'true');
 
+      const name = document.createElement('span');
+      name.className = 'repository-name';
+      name.dataset.fullName = repository;
+      name.tabIndex = 0;
+      name.setAttribute('aria-label', 'Full repository name: ' + repository);
+      name.setAttribute('aria-describedby', 'repository-tooltip');
+
       const value = document.createElement('code');
       value.textContent = repository;
+      name.append(value);
 
       const remove = document.createElement('button');
       remove.type = 'button';
@@ -78,8 +165,9 @@
       remove.setAttribute('aria-label', 'Remove ' + repository);
       remove.textContent = 'Remove';
 
-      item.append(dot, value, remove);
+      item.append(dot, name, remove);
       repositoryList.append(item);
+      bindRepositoryName(name);
     });
   }
 
@@ -191,6 +279,8 @@
     current = settingsApi.removeRepository(current, repository);
     save(current, 'Saved');
   });
+
+  repositoryList.addEventListener('scroll', () => hideRepositoryTooltip(), { passive: true });
 
   load();
 })(window);
