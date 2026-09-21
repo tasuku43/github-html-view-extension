@@ -13,22 +13,11 @@
 importScripts('lib/blob-url.js', 'lib/settings.js');
 
 const PREFIX = 'ghpreview:';
+const TRUST = PREFIX + 'trust-repository';
 const { blobUrl, settings } = globalThis.GHPREVIEW;
 
-// Do not inline files above this limit. A single-document preview needs a clear bound,
-// and rejecting before conversion avoids wasting work.
+// Limit fetched source documents so a single preview cannot consume unbounded memory.
 const LIMIT_BYTES = 8 * 1024 * 1024;
-
-function toBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  // Chunk the conversion so the argument list stays within browser limits.
-  const CHUNK = 0x8000;
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(index, index + CHUNK));
-  }
-  return btoa(binary);
-}
 
 async function take(url) {
   let response;
@@ -54,7 +43,6 @@ async function take(url) {
   return {
     ok: true,
     contentType,
-    base64: toBase64(buffer),
     text: new TextDecoder('utf-8').decode(buffer),
   };
 }
@@ -93,8 +81,82 @@ function loadSettings() {
   });
 }
 
+function saveSettings(value) {
+  return new Promise((resolve, rejectSettings) => {
+    chrome.storage.local.set({ [settings.STORAGE_KEY]: value }, () => {
+      const runtimeError = chrome.runtime.lastError;
+      if (runtimeError) {
+        rejectSettings(new Error('settings-unavailable'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function trustRepository(message, sender, sendResponse) {
+  if (!sender.url || !sender.url.startsWith('https://github.com/')) {
+    sendResponse(reject('invalid-sender', message.requestId));
+    return false;
+  }
+
+  const senderFile = blobUrl.parseFileUrl(sender.url);
+  if (senderFile === null || !blobUrl.isHtmlPath(senderFile.refAndPath)) {
+    sendResponse(reject('invalid-target', message.requestId));
+    return false;
+  }
+
+  const repository = blobUrl.repoKey(senderFile);
+  loadSettings()
+    .then(current => {
+      if (!current.previewEnabled) {
+        sendResponse(reject('preview-disabled', message.requestId));
+        return null;
+      }
+      if (settings.isAllowed(repository, current)) {
+        sendResponse({
+          ok: true,
+          requestId: message.requestId,
+          alreadyAllowed: true,
+        });
+        return null;
+      }
+
+      const result = settings.addRepository(current, repository);
+      if (result.error) {
+        sendResponse(reject('trust-failed', message.requestId));
+        return null;
+      }
+      return saveSettings(result.settings).then(() => {
+        sendResponse({
+          ok: true,
+          requestId: message.requestId,
+          alreadyAllowed: false,
+        });
+      });
+    })
+    .catch(error => {
+      sendResponse(
+        reject(
+          error && error.message === 'settings-unavailable'
+            ? 'settings-unavailable'
+            : 'trust-failed',
+          message.requestId,
+        ),
+      );
+    });
+
+  return true;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== PREFIX + 'fetch') {
+  if (!message) {
+    return false;
+  }
+  if (message.type === TRUST) {
+    return trustRepository(message, sender, sendResponse);
+  }
+  if (message.type !== PREFIX + 'fetch') {
     return false;
   }
   // Only a content script running on github.com may make this request.

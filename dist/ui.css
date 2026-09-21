@@ -2,28 +2,11 @@
  * Styles for extension-owned elements.
  *
  * These elements are inserted directly into GitHub's page. A Shadow DOM would add more
- * machinery than the single link and iframe need, so every selector uses the ghpreview-
- * prefix to avoid collisions.
+ * machinery than the single file-view item and iframe need, so every selector uses the
+ * ghpreview- prefix to avoid collisions.
  *
  * Use GitHub's CSS variables so the extension follows the active theme.
  */
-
-.ghpreview-link {
-  align-self: center;
-  margin-left: 8px;
-  padding: 3px 8px;
-  border: 1px solid var(--borderColor-default, #d0d7de);
-  border-radius: 6px;
-  color: var(--fgColor-default, #1f2328);
-  font-size: 12px;
-  line-height: 20px;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.ghpreview-link:hover {
-  background-color: var(--bgColor-neutral-muted, #f6f8fa);
-}
 
 /*
  * Inline placement: keep the preview in the file-content region at its natural width.
@@ -56,17 +39,6 @@
   border: 0;
   opacity: 0;
   pointer-events: none;
-}
-
-/* Legacy class: new mounts are staged instead of using a full-page fallback. */
-.ghpreview-frame-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483000;
-  width: 100vw;
-  height: 100vh;
-  border: 0;
-  background-color: var(--bgColor-default, #ffffff);
 }
 
 /* ---- Preview failure surface ------------------------------------------ */
@@ -227,6 +199,196 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
+/* ---- Repository trust surface --------------------------------------- */
+
+.ghpreview-trust-region {
+  display: flow-root;
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ghpreview-top-offset, 72px) 24px 56px;
+}
+
+.ghpreview-trust-surface {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 30px 24px 26px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 8px;
+  background: var(--bgColor-inset, var(--bgColor-default, #ffffff));
+  color: var(--fgColor-default, #1f2328);
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.08);
+  box-sizing: border-box;
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.ghpreview-trust-overlay {
+  position: fixed;
+  top: 72px;
+  left: 24px;
+  right: 24px;
+  z-index: 2147483000;
+  width: auto;
+  padding: 24px;
+}
+
+.ghpreview-trust-heading {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ghpreview-trust-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.ghpreview-trust-icon {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bgColor-accent-muted, #ddf4ff);
+  color: var(--fgColor-accent, #0969da);
+  font-weight: 700;
+}
+
+.ghpreview-trust-reason {
+  margin: 10px 0 0;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-trust-repository {
+  margin: 16px 0 0;
+  color: var(--fgColor-default, #1f2328);
+}
+
+.ghpreview-trust-repository code,
+.ghpreview-trust-diagnostic code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--bgColor-neutral-muted, #f6f8fa);
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ghpreview-trust-issues {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-trust-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.ghpreview-trust-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--borderColor-default, #d0d7de);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ghpreview-trust-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.ghpreview-trust-button-secondary {
+  background: var(--button-default-bgColor-rest, #f6f8fa);
+  color: var(--button-default-fgColor-rest, #1f2328);
+}
+
+.ghpreview-trust-button-primary {
+  border-color: var(--button-primary-borderColor-rest, #0969da);
+  background: var(--button-primary-bgColor-rest, #1f6feb);
+  color: var(--button-primary-fgColor-rest, #ffffff);
+}
+
+.ghpreview-trust-button:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.ghpreview-trust-note {
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--borderColor-muted, #d8dee4);
+  color: var(--fgColor-muted, #59636e);
+  font-size: 12px;
+}
+
+.ghpreview-trust-diagnostic {
+  margin: 8px 0 0;
+  color: var(--fgColor-muted, #8c959f);
+  font-size: 11px;
+}
+
+/* Keep runtime warnings visible without replacing the rendered document. */
+.ghpreview-runtime-warning {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+  margin: var(--ghpreview-top-offset, 72px) 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--borderColor-attention-muted, #9a6700);
+  border-radius: 6px;
+  background: var(--bgColor-attention-muted, #fff8c5);
+  color: var(--fgColor-default, #1f2328);
+  font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.ghpreview-runtime-warning-heading {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  flex: none;
+}
+
+.ghpreview-runtime-warning-icon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bgColor-attention-emphasis, #bf8700);
+  color: var(--fgColor-onEmphasis, #ffffff);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ghpreview-runtime-warning-reason {
+  min-width: 0;
+  margin: 0;
+  color: var(--fgColor-muted, #59636e);
+}
+
+.ghpreview-runtime-warning-diagnostic {
+  margin-left: auto;
+  color: var(--fgColor-muted, #8c959f);
+  font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+
+.ghpreview-frame-inline.ghpreview-frame-warning {
+  margin-top: 12px;
+}
+
+.ghpreview-runtime-warning-overlay {
+  position: fixed;
+  top: 72px;
+  left: 24px;
+  right: 24px;
+  z-index: 2147483000;
+}
+
 @media (max-width: 640px) {
   .ghpreview-frame-inline {
     margin: var(--ghpreview-top-offset, 56px) 0 40px;
@@ -236,7 +398,26 @@
     padding: var(--ghpreview-top-offset, 56px) 12px 40px;
   }
 
+  .ghpreview-trust-region {
+    padding: var(--ghpreview-top-offset, 56px) 12px 40px;
+  }
+
   .ghpreview-error-surface {
     padding: 24px 18px 20px;
+  }
+
+  .ghpreview-trust-surface {
+    padding: 24px 18px 20px;
+  }
+
+  .ghpreview-runtime-warning {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-top: var(--ghpreview-top-offset, 56px);
+  }
+
+  .ghpreview-runtime-warning-diagnostic {
+    width: 100%;
+    margin-left: 25px;
   }
 }

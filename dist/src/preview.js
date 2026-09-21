@@ -15,12 +15,15 @@
     settings,
     githubDom,
     inline,
+    protocol,
   } = global.GHPREVIEW;
 
   const PREFIX = 'ghpreview:';
   const RENDER = PREFIX + 'render';
+  const TRUST = PREFIX + 'trust-repository';
   const RENDER_STARTED = PREFIX + 'render-started';
   const RENDER_READY = PREFIX + 'render-ready';
+  const RENDER_FAILED = PREFIX + 'render-failed';
   const BOOTSTRAP = PREFIX + 'sandbox-bootstrap';
   const READY = PREFIX + 'sandbox-ready';
   const PING = PREFIX + 'sandbox-ping';
@@ -36,6 +39,8 @@
   let operation = null;
   let previewControlExpected = false;
   let lastViewSwitchRoot = null;
+  let trustRequest = null;
+  let trustStorageChangePending = false;
 
   function isHtmlRoute(href = location.href) {
     const file = blobUrl.parseFileUrl(href);
@@ -227,7 +232,7 @@
     });
   }
 
-  function ask(message, current) {
+  function ask(message, current, phase = 'fetching') {
     return new Promise(resolve => {
       if (!extensionAlive) {
         resolve({ ok: false, errorCode: 'extension-unavailable' });
@@ -240,21 +245,21 @@
             try {
               const runtimeError = chrome.runtime.lastError;
               if (runtimeError) {
-                emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+                emit('warn', 'response-rejected', phase, current, 'runtime-last-error', {
                   source: 'runtime-message',
                 });
                 resolve({ ok: false, errorCode: 'runtime-last-error' });
                 return;
               }
               if (!reply || typeof reply !== 'object') {
-                emit('warn', 'response-rejected', 'fetching', current, 'invalid-response', {
+                emit('warn', 'response-rejected', phase, current, 'invalid-response', {
                   source: 'runtime-message',
                 });
                 resolve({ ok: false, errorCode: 'invalid-response' });
                 return;
               }
               if (current && current.requestId && reply.requestId !== current.requestId) {
-                emit('warn', 'response-rejected', 'fetching', current, 'invalid-response', {
+                emit('warn', 'response-rejected', phase, current, 'invalid-response', {
                   source: 'runtime-message',
                   reason: 'request-id-mismatch',
                 });
@@ -264,7 +269,7 @@
               resolve(reply);
             } catch (error) {
               extensionAlive = false;
-              emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+              emit('warn', 'response-rejected', phase, current, 'runtime-last-error', {
                 source: 'runtime-message',
               });
               resolve({ ok: false, errorCode: 'runtime-last-error' });
@@ -273,7 +278,7 @@
         );
       } catch (error) {
         extensionAlive = false;
-        emit('warn', 'response-rejected', 'fetching', current, 'runtime-last-error', {
+        emit('warn', 'response-rejected', phase, current, 'runtime-last-error', {
           source: 'runtime-message',
         });
         resolve({ ok: false, errorCode: 'runtime-last-error' });
@@ -311,7 +316,6 @@
       debug('response-received', { kind, contentType: reply.contentType || 'unknown' }, current);
       return {
         text: reply.text,
-        dataUri: global.GHPREVIEW.inline.dataUri(reply.contentType, reply.base64),
         contentType: reply.contentType,
       };
       });
@@ -324,7 +328,9 @@
   let rendered = null;
 
   /**
-   * Check whether the extension is enabled for this page. When it is enabled, fetch early.
+   * Check whether the extension is enabled for this page and whether this exact repository
+   * has already been trusted. An untrusted repository is a user decision state, not a
+   * Preview failure: the controller can show the trust surface without fetching anything.
    *
    * Reading the allowlist is asynchronous, so callers can reuse the result while the page
    * remains unchanged.
@@ -345,13 +351,13 @@
     );
     if (!loaded.previewEnabled) {
       emit('warn', 'preview-disabled', 'checking-settings', current, 'preview-disabled');
-      return { allowed: false, errorCode: 'preview-disabled', settings: loaded };
+      return { enabled: false, allowed: false, errorCode: 'preview-disabled', settings: loaded };
     }
     if (!settings.isAllowed(blobUrl.repoKey(parsed), loaded)) {
       emit('warn', 'repository-not-allowed', 'checking-settings', current, 'repository-not-allowed');
-      return { allowed: false, errorCode: 'repository-not-allowed', settings: loaded };
+      return { enabled: true, allowed: false, errorCode: 'repository-not-allowed', settings: loaded };
     }
-    return { allowed: true, errorCode: null, settings: loaded };
+    return { enabled: true, allowed: true, errorCode: null, settings: loaded };
   }
 
   function abandonOperation(reason) {
@@ -387,6 +393,64 @@
     });
   }
 
+  function showTrustSurface(parsed, current, errorCode = 'repository-not-allowed') {
+    setState('trust-required', errorCode, current);
+    if (githubDom.hasTrustRequired()) {
+      githubDom.reconcileTrust();
+      return;
+    }
+    githubDom.showTrustRequired({
+      code: errorCode,
+      repository: blobUrl.repoKey(parsed),
+      reason: errorCode === 'repository-not-allowed'
+        ? 'HTML Preview is enabled, but this repository is not trusted yet.'
+        : 'The repository could not be trusted. Try again or use the extension popup.',
+      requestId: current && current.requestId,
+      sessionId: current && current.sessionId,
+      onTrust: () => trustRepository(parsed, current),
+      onDecline: () => {
+        if (!isStale(current)) {
+          debug('trust-declined', { source: 'preview-surface' }, current);
+          setState('trust-required', 'repository-not-allowed', current);
+        }
+      },
+    });
+  }
+
+  async function trustRepository(parsed, current) {
+    if (trustRequest === current || isStale(current)) {
+      return;
+    }
+    trustRequest = current;
+    debug('trust-requested', { source: 'preview-surface' }, current);
+    const reply = await ask({ type: TRUST }, current, 'checking-settings');
+    if (trustRequest === current) {
+      trustRequest = null;
+    }
+    if (isStale(current)) {
+      return;
+    }
+    if (!reply || !reply.ok) {
+      const errorCode = reply && reply.errorCode ? reply.errorCode : 'trust-failed';
+      emit('warn', 'trust-failed', 'checking-settings', current, errorCode, {
+        source: 'preview-surface',
+      });
+      showTrustSurface(parsed, current, errorCode);
+      return;
+    }
+
+    debug('repository-trusted', { alreadyAllowed: reply.alreadyAllowed === true }, current);
+    // The Worker persists the new settings. Refresh locally as a fallback, while the
+    // storage listener consumes the matching change event when Chrome delivers it.
+    trustStorageChangePending = true;
+    settingsSnapshot = null;
+    cache.clear();
+    loadFailures.clear();
+    rendered = null;
+    abandonOperation('repository-trusted');
+    apply();
+  }
+
   async function apply() {
     setState('detecting');
     // Accept Blame too. It shows the same file, so Preview remains available.
@@ -410,7 +474,7 @@
     debug('page-detected', { view: file.view, fileKind: 'html' }, current);
     setState('checking-settings', null, current);
     const access = await isEnabled(file, current);
-    if (!access.allowed) {
+    if (!access.enabled) {
       previewControlExpected = false;
       teardown('disabled', current, access.errorCode);
       return;
@@ -439,6 +503,15 @@
       unmount('view-change', current);
       setState('idle', null, current);
       return;
+    }
+    if (!access.allowed) {
+      // The master switch is on, so keep Preview visible and make the trust decision part of
+      // the Preview flow. No fetch or sandbox frame is started before explicit approval.
+      showTrustSurface(file, current, access.errorCode);
+      return;
+    }
+    if (githubDom.hasTrustRequired()) {
+      unmount('repository-trusted', current);
     }
     // A policy or fetch failure owns the Preview surface until the user explicitly
     // chooses Recheck. MutationObserver callbacks must not replace that surface with a
@@ -508,7 +581,11 @@
    * layer to remove it; redundant removal is harmless.
    */
   function unmount(reason = 'preview-destroyed', current = operation) {
-    const hadSurface = handover.frame !== null || githubDom.hasError();
+    const hadSurface =
+      handover.frame !== null ||
+      githubDom.hasError() ||
+      githubDom.hasTrustRequired() ||
+      githubDom.hasWarning();
     if (hadSurface) {
       debug('preview-destroyed', { reason }, current);
     }
@@ -602,38 +679,14 @@
       return;
     }
 
-    const built = await githubDom.inlineDocument(
+    const built = githubDom.prepareDocument(
       source.text,
-      blobUrl.resolutionBase(parsed),
-      (url) => load(url, current),
       current.sessionId,
       current.settings && current.settings.capabilities,
     );
     debug('document-built', {
-      htmlLength: built.html.length,
-      noteCount: built.notes.length,
+      htmlLength: built.length,
     }, current);
-    // Report each note once by content. An index-based key could hide a different note
-    // when a new document uses the same position.
-    if (built.notes.length > 0) {
-      const noteKinds = new Set(
-        built.notes.map(note => {
-          if (note.startsWith('Could not load reference:')) {
-            return 'reference-load-failed';
-          }
-          if (note.startsWith('Could not fetch file:')) {
-            return 'source-fetch-failed';
-          }
-          return 'inline-warning';
-        }),
-      );
-      noteKinds.forEach(kind =>
-        githubDom.warn(
-          'note:' + kind,
-          'Inline document processing reported a ' + kind + ' condition',
-        ),
-      );
-    }
 
     // Do not render if navigation happened while the document was being prepared.
     if (rendered !== location.href || isStale(current)) {
@@ -641,7 +694,7 @@
       return;
     }
 
-    handover.html = built.html;
+    handover.html = built;
     setState('rendering', null, current);
     openFrame(
       chrome.runtime.getURL('sandbox.html'),
@@ -769,13 +822,17 @@
             return;
           }
           debug('sandbox-document-loaded', { ready: handover.ready }, current);
+          debug('sandbox-frame-loaded', { ready: handover.ready }, current);
           if (handover.ready) {
             return;
           }
           // Ask the bundled bootstrap to repeat its ready signal. This makes the
           // handshake recoverable if navigation or a stale frame consumed the first one.
           try {
-            frame.contentWindow.postMessage({ type: PING, sessionId: current.sessionId }, '*');
+            frame.contentWindow.postMessage(
+              protocol.create(PING, current.sessionId),
+              '*',
+            );
             debug('sandbox-ping-sent', undefined, current);
           } catch (error) {
             emit('warn', 'sandbox-ping-failed', 'sandbox', current, 'sandbox-communication-failed');
@@ -809,10 +866,24 @@
     handover.html = null;
     setState('rendering', null, operation);
     debug('render-sent', { htmlLength: html.length }, operation);
-    handover.frame.contentWindow.postMessage(
-      { type: RENDER, html, sessionId: handover.sessionId },
-      '*',
-    );
+    try {
+      handover.frame.contentWindow.postMessage(
+        protocol.create(RENDER, handover.sessionId, { html }),
+        '*',
+      );
+    } catch (error) {
+      emit('error', 'render-failed', 'rendering', operation, 'render-failed');
+      failPreview(
+        {
+          code: 'render-failed',
+          reason: 'The preview could not render the document.',
+          issues: [{ message: 'The isolated document rejected the render request.' }],
+          onOpenCode: () => go(blobUrl.sourceHref(location.href)),
+          onRecheck: () => recheck(blobUrl.parseFileUrl(location.href), operation),
+        },
+        operation,
+      );
+    }
   }
 
   /**
@@ -838,6 +909,8 @@
                   ? 'render-ready'
                   : data && data.type === RUNTIME_ERROR
                     ? 'runtime-error'
+                    : data && data.type === RENDER_FAILED
+                      ? 'render-failed'
                     : 'other';
       debug(
         'sandbox-message-received',
@@ -862,6 +935,10 @@
         debug('sandbox-message-rejected', { reason: 'missing-data' }, operation);
         return;
       }
+      if (!protocol.isMessage(data)) {
+        debug('sandbox-message-rejected', { reason: 'protocol-version' }, operation);
+        return;
+      }
       if (event.origin !== 'null') {
         debug('sandbox-message-rejected', { reason: 'origin-mismatch' }, operation);
         return;
@@ -880,7 +957,7 @@
         return;
       }
       if (data.type === BOOTSTRAP) {
-        debug('sandbox-bootstrap-received', undefined, operation);
+        debug('sandbox-bootstrap', undefined, operation);
         return;
       }
       if (data.type === RENDER_STARTED) {
@@ -894,20 +971,33 @@
         scheduleHeightTimeout(blobUrl.parseFileUrl(location.href), operation);
         return;
       }
-      if (data.type === RUNTIME_ERROR) {
-        emit('error', 'runtime-error', 'sandbox', operation, 'sandbox-runtime-error', {
-          source: 'rendered-document',
-        });
+      if (data.type === RENDER_FAILED) {
+        emit('error', 'render-failed', 'rendering', operation, 'render-failed');
         failPreview(
           {
-            code: 'sandbox-runtime-error',
-            reason: 'The preview ran into a runtime error.',
-            issues: [{ message: 'The isolated document reported a runtime error.' }],
+            code: 'render-failed',
+            reason: 'The preview could not render the document.',
+            issues: [{ message: 'The isolated document rejected the render request.' }],
             onOpenCode: () => go(blobUrl.sourceHref(location.href)),
             onRecheck: () => recheck(blobUrl.parseFileUrl(location.href), operation),
           },
           operation,
         );
+        return;
+      }
+      if (data.type === RUNTIME_ERROR) {
+        emit('error', 'runtime-error', 'sandbox', operation, 'sandbox-runtime-error', {
+          source: 'rendered-document',
+        });
+        const state = previewState === 'ready' ? 'ready' : previewState;
+        setState(state, 'sandbox-runtime-error', operation);
+        githubDom.showRuntimeWarning({
+          state,
+          code: 'sandbox-runtime-error',
+          reason: 'The document reported a runtime error after rendering.',
+          requestId: operation && operation.requestId,
+          sessionId: operation && operation.sessionId,
+        });
         return;
       }
       // Resize to the document height so the iframe does not create a second scrollbar.
@@ -923,7 +1013,11 @@
           heightTimer = null;
         }
         githubDom.resizeFrame(data.height);
-        setState('ready', null, operation);
+        setState(
+          'ready',
+          previewErrorCode === 'sandbox-runtime-error' ? previewErrorCode : null,
+          operation,
+        );
       }
     }
     window.addEventListener('message', onMessage);
@@ -1207,6 +1301,9 @@
     if (previewState === 'failed' && !githubDom.hasError()) {
       return true;
     }
+    if (previewState === 'trust-required' && !githubDom.hasTrustRequired()) {
+      return true;
+    }
     if (previewState === 'ready' && !githubDom.hasFrame()) {
       return true;
     }
@@ -1277,7 +1374,13 @@
         return;
       }
       if (githubDom.isMissingFilePage()) {
-        if (operation !== null || githubDom.hasPreviewLink() || githubDom.hasFrame() || githubDom.hasError()) {
+        if (
+          operation !== null ||
+          githubDom.hasPreviewLink() ||
+          githubDom.hasFrame() ||
+          githubDom.hasError() ||
+          githubDom.hasTrustRequired()
+        ) {
           debug('page-rejected', { reason: 'github-file-not-found' });
           rejectMissingFilePage();
         }
@@ -1338,6 +1441,10 @@
       cache.clear();
       loadFailures.clear();
       rendered = null;
+      if (trustStorageChangePending) {
+        trustStorageChangePending = false;
+        return;
+      }
       if (operation !== null) {
         abandonOperation('settings-changed');
       }

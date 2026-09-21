@@ -20,6 +20,7 @@
     'rendering',
     'waiting-for-height',
     'ready',
+    'trust-required',
     'disabled',
     'failed',
     'stale',

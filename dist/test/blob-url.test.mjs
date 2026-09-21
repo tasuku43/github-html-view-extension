@@ -66,7 +66,7 @@ test('ignores non-github.com origins', () => {
 });
 
 test('parses URLs with fragments and ?plain=1', () => {
-  const parsed = parseBlobUrl('https://github.com/o/r/blob/main/a.html?plain=1#preview');
+  const parsed = parseBlobUrl('https://github.com/o/r/blob/main/a.html?plain=1#section');
   assert.equal(parsed.refAndPath, 'main/a.html');
   assert.equal(rawUrl(parsed), 'https://github.com/o/r/raw/main/a.html');
 });
@@ -84,7 +84,7 @@ test('identifies HTML files by extension only', () => {
 test('defaults to preview and uses ?plain=1 for the source view', () => {
   // This follows GitHub's Markdown behavior.
   assert.equal(shouldPreview('https://github.com/o/r/blob/main/a.html'), true);
-  assert.equal(shouldPreview('https://github.com/o/r/blob/main/a.html#preview'), true);
+  assert.equal(shouldPreview('https://github.com/o/r/blob/main/a.html#section'), true);
   assert.equal(shouldPreview('https://github.com/o/r/blob/main/a.html#L3'), true);
   assert.equal(shouldPreview('https://github.com/o/r/blob/main/a.html?plain=1'), false);
 });

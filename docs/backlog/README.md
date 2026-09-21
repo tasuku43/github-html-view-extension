@@ -4,15 +4,15 @@ The backlog is ordered by the smallest product gaps that provide the most user v
 Each numbered item should produce a browser-verifiable checkpoint before the next item
 starts.
 
-- `03_release-gates.md` is the next product milestone.
-- `02_fixtures-and-acceptance.md` makes the behavior reproducible and reviewable.
-- `03_release-gates.md` prepares the project for a public release.
+- `01_settings-popup.md`, `02_fixtures-and-acceptance.md`, and `03_release-gates.md` are
+  complete product milestones.
+- `04_visual-review.md` tracks the remaining Storybook-style production-state review surface.
 - `90_deferred-architecture.md` records ideas that are intentionally out of scope until
   the product needs them.
 
-The current JavaScript baseline, sandbox boundary, and browser E2E check are the starting
-point. A backlog item must not turn into a broad rewrite unless its acceptance criteria
-prove that the current boundary cannot support the requested behavior.
+The current checked-in runtime, sandbox boundary, and browser E2E check are the maintained
+starting point. A backlog item must not turn into a broad rewrite unless its acceptance
+criteria prove that the current boundary cannot support the requested behavior.
 
 ## Status model
 
@@ -31,7 +31,8 @@ commit that changes the work state.
 
 | Item | Priority | Status | Next evidence |
 | --- | --- | --- | --- |
-| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | Done | Popup-to-GitHub E2E |
-| [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Done | Fixture matrix, scroll, and SPA checks |
-| [03 — Minimal Release Gates](03_release-gates.md) | P1 | Planned | Fresh-checkout verification |
+| [01 — Action Popup and Settings](01_settings-popup.md) | P0 | Done | Completed |
+| [02 — Deterministic Fixtures and Browser Acceptance](02_fixtures-and-acceptance.md) | P1 | Done | Completed |
+| [03 — Minimal Release Gates](03_release-gates.md) | P1 | Done | Completed |
+| [04 — Production Visual Review](04_visual-review.md) | P1 | Planned | Production DOM/state gallery |
 | [90 — Deferred Architecture Work](90_deferred-architecture.md) | P2 | Deferred | A measured maintenance need |

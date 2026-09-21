@@ -126,7 +126,7 @@
       return 'Wildcards are not supported. Enter an exact owner/repository value.';
     }
     if (error.code === 'duplicate-repository') {
-      return 'That repository is already approved.';
+      return 'That repository is already trusted.';
     }
     return 'Enter a valid owner/repository value, such as owner/repository.';
   }
@@ -182,8 +182,8 @@
     ).length;
     previewSubtitle.textContent = current.previewEnabled
       ? current.repositories.length > 0
-        ? 'Active for allowed repositories'
-        : 'Add a repository to start Preview'
+        ? 'Active for trusted repositories'
+        : 'Trust a repository from Preview or add one here'
       : 'Preview is currently off';
     capabilitySummary.textContent = !current.previewEnabled
       ? current.repositories.length > 0

@@ -35,6 +35,12 @@ if (!rootUrl.pathname.endsWith('/')) {
 }
 
 const cases = [
+  {
+    name: 'trust-flow',
+    path: 'docs/sample/index.html',
+    state: 'trust-required',
+    trustFlow: true,
+  },
   { name: 'valid', path: 'docs/sample/index.html', state: 'ready' },
   {
     name: 'direct-code-start',
@@ -72,7 +78,7 @@ const cases = [
   {
     name: 'runtime-error',
     path: 'docs/sample/runtime-error.html',
-    state: 'failed',
+    state: 'ready',
     errorCode: 'sandbox-runtime-error',
     enableJavaScript: true,
   },
@@ -100,6 +106,7 @@ function runCase(candidate) {
     GHPREVIEW_E2E_ENABLE_JAVASCRIPT: candidate.enableJavaScript ? '1' : '0',
     GHPREVIEW_E2E_PRESERVE_TARGET_VIEW: candidate.preserveTargetView ? '1' : '0',
     GHPREVIEW_E2E_EXPECT_INITIAL_VIEW: candidate.initialView || '',
+    GHPREVIEW_E2E_TRUST_FLOW: candidate.trustFlow ? '1' : '0',
   };
 
   return new Promise((resolve, reject) => {

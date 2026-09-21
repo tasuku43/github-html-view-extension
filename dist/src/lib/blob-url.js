@@ -9,8 +9,8 @@
  * unnecessary authorization dependency.
  *
  * Instead, keep the suffix as one string and replace `blob` with `raw`. GitHub resolves
- * both forms using the same rules, so the correct target is preserved without knowing
- * the boundary. Relative references can then use normal URL resolution (inline.js).
+ * both forms using the same rules, so the correct target is preserved without guessing
+ * where the ref ends and the file path begins.
  */
 (function initBlobUrl(global) {
   'use strict';
@@ -76,14 +76,6 @@
   }
 
   /**
-   * Return the base URL for relative references, including the file name. It is intended
-   * for calls such as `new URL('./a.css', base)`.
-   */
-  function resolutionBase(parsed) {
-    return rawUrl(parsed);
-  }
-
-  /**
    * Check whether a path is an HTML file.
    *
    * Use the extension alone. Inspecting content could unexpectedly render files such as
@@ -104,9 +96,7 @@
    * Do not invent a custom fragment. `?plain=1` has an established meaning, works in
    * links, and is less likely to conflict if GitHub adds native HTML preview support.
    *
-   * Treat `#preview` URLs as preview requests so existing links keep working.
    */
-  const PREVIEW_HASH = '#preview';
   const PLAIN = 'plain';
 
   /** Check whether the source view was requested. */
@@ -157,12 +147,10 @@
     parseBlobUrl,
     repoKey,
     rawUrl,
-    resolutionBase,
     isHtmlPath,
     isPlainRequested,
     shouldPreview,
     previewHref,
     sourceHref,
-    PREVIEW_HASH,
   };
 })(typeof window === 'undefined' ? globalThis : window);

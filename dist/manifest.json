@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ghpreview",
+  "name": "HTML Preview",
   "version": "0.1.0",
-  "description": "Preview HTML files from explicitly allowlisted GitHub repositories.",
+  "description": "Preview HTML files from explicitly trusted GitHub repositories.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://github.com/*",
@@ -24,6 +24,7 @@
       "matches": ["https://github.com/*"],
       "css": ["bootstrap.css"],
       "js": [
+        "src/lib/protocol.js",
         "src/lib/blob-url.js",
         "src/lib/view-transition.js",
         "src/lib/view-coordinator.js",

@@ -42,8 +42,9 @@ and inactive by default, while still making the exact repository approval model 
 ## Runtime behavior
 
 - When `previewEnabled` is false, the content script must not fetch or mount a Preview.
-- When the repository is not allowlisted, the content script must not fetch or mount a
-  Preview.
+- When `previewEnabled` is true and the repository is not yet trusted, selecting Preview must
+  show the inline `trust-required` state without fetching or mounting a Preview. The user can
+  explicitly trust the exact current repository from that state, after which Preview resumes.
 - The Worker must recheck the normalized settings before serving a fetch request.
 - The sandbox must receive only the optional capability that is enabled: `allow-modals`.
   Its bundled bootstrap always requires `allow-scripts`; the JavaScript capability controls
@@ -58,6 +59,8 @@ and inactive by default, while still making the exact repository approval model 
 - Toggling the master switch changes whether the Preview control appears on a supported
   GitHub HTML file.
 - A valid repository can be added, displayed, and removed without a page reload.
+- A first-time Preview selection can trust the current repository inline, without opening the
+  Popup first. The action is explicit and idempotent.
 - Invalid and duplicate entries remain visible as actionable errors and are not stored.
 - Case differences do not change repository matching.
 - Capability changes are observable in the sandbox behavior and do not weaken the opaque

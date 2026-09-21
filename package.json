@@ -3,6 +3,8 @@
   "private": true,
   "description": "Incremental development workspace for a GitHub HTML preview extension.",
   "scripts": {
+    "check": "node scripts/check.mjs",
+    "package": "npm run check && node scripts/package.mjs",
     "test": "npm --prefix dist test",
     "e2e": "node scripts/e2e-chrome.mjs",
     "e2e:fixtures": "node scripts/e2e-fixtures.mjs"

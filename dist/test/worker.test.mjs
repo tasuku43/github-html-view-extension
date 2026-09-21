@@ -16,12 +16,12 @@ function createWorker(
   },
 ) {
   let listener = null;
+  let storedSettings = settingsValue;
   const context = vm.createContext({
     ArrayBuffer,
     URL,
     TextDecoder,
     Uint8Array,
-    btoa: value => Buffer.from(value, 'binary').toString('base64'),
     fetch: fetchImpl,
     chrome: {
       runtime: {
@@ -35,7 +35,11 @@ function createWorker(
       storage: {
         local: {
           get(key, callback) {
-            callback({ [key]: settingsValue });
+            callback({ [key]: storedSettings });
+          },
+          set(value, callback) {
+            storedSettings = value.settings;
+            callback();
           },
         },
       },
@@ -158,7 +162,6 @@ test('returns a successful payload with the request ID', async () => {
   assert.equal(result.requestId, 'request-success');
   assert.equal(result.contentType, 'text/html');
   assert.equal(result.text, '<h1>ok</h1>');
-  assert.equal(typeof result.base64, 'string');
 });
 
 test('rejects a fetch when the master Preview switch is off', async () => {
@@ -239,4 +242,96 @@ test('rejects a raw target from a different repository', async () => {
     requestId: 'request-mismatch',
   });
   assert.equal(fetchCount, 0);
+});
+
+test('trusts the exact sender repository and persists it without fetching', async () => {
+  let fetchCount = 0;
+  const dispatch = createWorker(
+    async () => {
+      fetchCount += 1;
+      return response();
+    },
+    {
+      previewEnabled: true,
+      capabilities: {},
+      repositories: [],
+    },
+  );
+
+  const result = await dispatch({
+    type: 'ghpreview:trust-repository',
+    requestId: 'request-trust',
+  }, {
+    url: 'https://github.com/Example-Owner/Example-Repo/blob/main/index.html',
+  });
+
+  assert.deepEqual(plain(result), {
+    ok: true,
+    requestId: 'request-trust',
+    alreadyAllowed: false,
+  });
+  assert.equal(fetchCount, 0);
+});
+
+test('trust requests are idempotent for case-insensitive repository identity', async () => {
+  const dispatch = createWorker(
+    async () => response(),
+    {
+      previewEnabled: true,
+      capabilities: {},
+      repositories: [],
+    },
+  );
+  const sender = { url: 'https://github.com/Example-Owner/Example-Repo/blob/main/index.html' };
+
+  const first = await dispatch({
+    type: 'ghpreview:trust-repository',
+    requestId: 'request-trust-first',
+  }, sender);
+  const second = await dispatch({
+    type: 'ghpreview:trust-repository',
+    requestId: 'request-trust-second',
+  }, {
+    url: 'https://github.com/example-owner/example-repo/blob/main/other.html',
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(first.alreadyAllowed, false);
+  assert.deepEqual(plain(second), {
+    ok: true,
+    requestId: 'request-trust-second',
+    alreadyAllowed: true,
+  });
+});
+
+test('rejects trust requests when Preview is disabled or the sender is not a GitHub HTML page', async () => {
+  const disabled = createWorker(
+    async () => response(),
+    {
+      previewEnabled: false,
+      capabilities: {},
+      repositories: [],
+    },
+  );
+  const disabledResult = await disabled({
+    type: 'ghpreview:trust-repository',
+    requestId: 'request-trust-disabled',
+  });
+  const invalidSender = await disabled({
+    type: 'ghpreview:trust-repository',
+    requestId: 'request-trust-sender',
+  }, { url: 'https://example.test/page' });
+
+  assert.deepEqual(plain(disabledResult), {
+    ok: false,
+    status: 0,
+    errorCode: 'preview-disabled',
+    requestId: 'request-trust-disabled',
+  });
+  assert.deepEqual(plain(invalidSender), {
+    ok: false,
+    status: 0,
+    errorCode: 'invalid-sender',
+    requestId: 'request-trust-sender',
+  });
 });

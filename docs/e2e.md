@@ -32,14 +32,34 @@ npm run e2e
 ```
 
 The runner opens the Action Popup in a temporary browser profile, verifies the disabled
-first-run state, enables Preview, adds the exact `owner/repository` entry, and then checks
-the initial Preview state and the following navigation contract:
+first-run state, enables Preview, and then checks the real GitHub page. The normal smoke
+path adds the exact `owner/repository` entry from the Popup. The trust-flow path starts with
+an empty allowlist and approves the current repository from the Preview surface itself.
 
 ```text
 Preview -> Code
 Code -> Blame
 Blame -> Preview
 Blame -> Code
+```
+
+To verify first-time trust, decline, already-trusted Preview, removal, re-trust, and duplicate
+prevention in one isolated browser profile:
+
+```sh
+GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/path/to/fixture.html" \
+GHPREVIEW_E2E_TRUST_FLOW=1 \
+npm run e2e
+```
+
+An optional second public HTML Blob or Blame URL verifies that trust does not follow navigation
+to another repository. It is supplied at runtime and is never committed:
+
+```sh
+GHPREVIEW_E2E_URL="https://github.com/owner/repository/blob/main/path/to/fixture.html" \
+GHPREVIEW_E2E_TRUST_FLOW=1 \
+GHPREVIEW_E2E_SECOND_URL="https://github.com/another-owner/another-repository/blob/main/path/to/fixture.html" \
+npm run e2e
 ```
 
 For a page that is expected to be rejected by the HTML policy, assert the failure instead:
@@ -100,12 +120,18 @@ npm run e2e
 ## What the runner verifies
 
 - the repository is enabled in the extension storage context;
-- a terminal Preview state is reached (`ready`, `failed`, or `disabled`);
+- a terminal Preview state is reached (`ready`, `failed`, `disabled`, or `trust-required`);
+- an untrusted repository reaches `trust-required` without a fetch or sandbox frame, and an
+  explicit trust action continues into `ready`;
+- declining trust leaves the Popup allowlist empty; removing trust returns the current page to
+  `trust-required`; repeated trust and Preview selection keep exactly one entry and one control;
+- when `GHPREVIEW_E2E_SECOND_URL` is provided, navigation to that repository gets its own trust
+  decision and returning to the original repository restores its existing trust;
 - `data-preview-state`, `data-preview-error-code`, `data-preview-request-id`, and
   `data-preview-session-id` are observable;
 - the valid fixture reaches a long Preview surface without an unexpected inner scrollbar;
-- the runtime-error fixture reaches `failed` with `sandbox-runtime-error` when inline
-  JavaScript is enabled;
+- the runtime-error fixture reaches `ready` with a non-destructive
+  `sandbox-runtime-error` warning when inline JavaScript is enabled;
 - Preview remains present while Code and Blame are selected;
 - Blame -> Code ends at the Blob source URL with `?plain=1`;
 - Blame -> Code keeps the GitHub `Files` tree present through the transition;

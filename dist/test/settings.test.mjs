@@ -19,7 +19,7 @@ test('creates the safe disabled-by-default settings object', () => {
   });
 });
 
-test('normalizes supported capabilities and removes retired capabilities', () => {
+test('normalizes supported capabilities and ignores unsupported fields', () => {
   assert.deepEqual(
     settings.normalize({
       previewEnabled: true,

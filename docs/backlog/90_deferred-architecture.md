@@ -3,7 +3,7 @@
 Status: Deferred
 Priority: P2 — revisit only when maintenance cost justifies it
 
-These items are intentionally not prerequisites for the next product milestone.
+These items are intentionally not prerequisites for the current release gates.
 
 ## TypeScript migration
 
@@ -17,21 +17,21 @@ Keep protocol constants, runtime checks, request IDs, session IDs, and error cod
 Do not add generated schemas or a comprehensive typed protocol layer until message drift is a
 measured maintenance problem.
 
-## Framework-based UI tooling
+## Framework choice
 
-Do not add React or a full Storybook installation. A small static design gallery or focused
-browser checks are sufficient for the current number of surfaces. If a gallery is added, it
-must reuse the production DOM factories and styles.
+Do not add React or a full Storybook installation merely for framework adoption. The required
+production-state visual review surface is tracked in backlog item 04; its implementation may
+remain a small static gallery as long as it reuses the production DOM factories and styles.
 
 ## Source/build rewrite
 
-Do not replace the working `dist/` baseline with a new `src/` and bundler architecture as a
-precondition for settings. Preserve the known sandbox startup path and make one observable
-change at a time.
+Do not replace the maintained `dist/` runtime with a new source tree and bundler as a
+precondition for product work. Preserve the known sandbox startup path and make one
+observable change at a time.
 
 ## CI and advanced failure injection
 
 CI, deterministic Worker fault injection, sandbox startup fault injection, and exhaustive
 branch/tag/commit matrices can follow the local settings and fixture milestones. The existing
-observability and Playwright smoke test are the baseline for deciding which additional seams
+observability and Playwright smoke test are the evidence for deciding which additional seams
 are worth maintaining.

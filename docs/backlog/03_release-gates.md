@@ -1,6 +1,6 @@
 # 03 — Minimal Release Gates
 
-Status: Planned  
+Status: Done
 Priority: P1 — required before public release
 
 ## Goal
@@ -28,6 +28,35 @@ introducing a large build system.
 - Packaging does not silently omit the sandbox entry, popup, styles, or content scripts.
 - The release review has an explicit permission and security-boundary result.
 - No release step requires TypeScript, React, Storybook, or an untracked local script.
+
+## Implemented gate commands
+
+From a fresh checkout:
+
+```sh
+npm ci
+npm run check
+npm run package
+```
+
+`npm run check` validates the MV3 manifest and its local file references, parses the
+checked-in JavaScript files, and runs the unit tests. `npm run package` runs that gate
+first, then creates `artifacts/extension-<manifest-version>.zip` with the complete contents
+of `dist/` and verifies that every runtime file is present in the archive.
+
+Browser E2E remains separate:
+
+```sh
+GHPREVIEW_E2E_URL=https://github.com/owner/repository/blob/main/path/to/file.html \\
+  npm run e2e
+npm run e2e:fixtures
+```
+
+The E2E commands require a real Chromium-based browser and a public GitHub URL. They are
+not part of the local `check` command.
+
+The permission and sandbox review result is recorded in
+[docs/release-review.md](../release-review.md).
 
 ## Non-goals
 

@@ -22,7 +22,7 @@ The product name is intentionally provisional. No final brand name is part of th
 
 ## Product promise
 
-On GitHub file views, users can preview an allowlisted, self-contained HTML document without losing GitHub's native Code and Blame navigation. The extension must be safe by default, predictable when it refuses a file, and diagnosable when a preview does not complete.
+On GitHub file views, users can preview an explicitly trusted, self-contained HTML document without losing GitHub's native Code and Blame navigation. The extension must be safe by default, make trust decisions explicit, and be diagnosable when a preview does not complete.
 
 ## Scope
 
@@ -85,6 +85,12 @@ The stored shape is:
 - The Popup must make the disabled-by-default behavior obvious.
 - Changes save immediately and show a clear saved state or equivalent feedback.
 - The Popup must remain usable at a compact Chrome Action Popup size.
+- When Preview is enabled but the current repository is not trusted, selecting Preview must
+  show an inline trust decision instead of treating the repository as an ordinary Preview
+  failure.
+- The trust surface must identify the exact current `owner/repository` and offer an explicit
+  action to trust it. Trusting it continues to Preview without requiring a Popup visit or a
+  second manual Preview selection.
 - The Popup must show form submission and new-window behavior as read-only `Not supported`
   limits rather than misleading disabled switches.
 - All user-facing text is English.
@@ -99,6 +105,12 @@ The stored shape is:
 - Match owner and repository case-insensitively, following GitHub's repository identity behavior.
 - Do not accept wildcards or partial matches.
 - Preserve a useful display spelling, but use normalized values for matching.
+- The Popup remains the place to review and remove trusted repositories; it is not required
+  before the first Preview attempt.
+- A trust action is idempotent. Repeated selection, refresh, back/forward navigation, and
+  concurrent settings updates must never create duplicate entries.
+- Declining the inline trust decision leaves the repository unchanged and keeps Preview,
+  Code, and Blame available.
 - There is no legacy data-format compatibility requirement because the extension is unreleased.
 
 ## HTML policy
@@ -161,7 +173,7 @@ The Preview control remains selected and available. The error surface must inclu
 The following failure categories must be distinguishable:
 
 - Fetch or Worker failure.
-- Repository not allowed.
+- Repository trust required before fetch.
 - HTML policy or validation failure.
 - Sandbox communication or startup failure.
 - Render failure.
@@ -169,6 +181,23 @@ The following failure categories must be distinguishable:
 - Runtime error after rendering.
 
 `Recheck` must invalidate any in-memory response for the current file and perform a fresh Worker request. It must not depend on a failed response or stale cache entry.
+
+### Repository trust
+
+The untrusted-repository state is a separate Preview lifecycle state, not a generic failure
+surface. It must communicate:
+
+- `Trust this repository for Preview?`.
+- The exact current `owner/repository` shown in the page UI.
+- That only this exact repository will be added and no source is fetched before approval.
+- An explicit `Trust repository` action and a `Not now` action.
+- That trusted repositories can be reviewed or removed from the Action Popup.
+
+The Worker derives the repository from the sending GitHub file page and rechecks the global
+Preview switch before persisting the exact entry. The content script must not trust a
+repository name supplied only by page markup or by an arbitrary message. A successful trust
+action invalidates the current untrusted operation and naturally starts a fresh Preview
+operation. A failed trust write remains retryable and does not fetch or mount the document.
 
 ## Preview lifecycle
 
@@ -180,6 +209,7 @@ The lifecycle vocabulary is:
 idle
 detecting
 checking-settings
+trust-required
 fetching
 validating
 mounting
@@ -243,6 +273,10 @@ page-detected
 settings-loaded
 preview-disabled
 repository-not-allowed
+trust-requested
+repository-trusted
+trust-declined
+trust-failed
 request-started
 request-sent
 response-received
@@ -367,6 +401,13 @@ The browser check must verify:
 
 - A valid fixture reaches `data-preview-state="ready"`.
 - A policy fixture reaches `data-preview-error-code="html-policy-violation"` or its more specific policy code.
+- An untrusted repository reaches `data-preview-state="trust-required"` and
+  `data-preview-error-code="repository-not-allowed"` without a Worker fetch or sandbox
+  frame, then reaches `ready` after the explicit trust action.
+- Declining the trust action leaves the allowlist unchanged. Removing trust from the Popup
+  causes the same repository to return to `trust-required` on the next Preview selection.
+- Repeated trust actions remain idempotent, and navigating between repositories does not
+  reuse or duplicate the previous repository's trust decision.
 - Preview, Code, and Blame remain available through GitHub navigation.
 - Blob and Blame flows do not duplicate controls or leave stale frames.
 - The preview surface owns the intended scrolling behavior and hides GitHub code-line artifacts behind it.

@@ -10,7 +10,7 @@
 (function initGithubDom(global) {
   'use strict';
 
-  const { inline } = global.GHPREVIEW;
+  const PROTOCOL_VERSION = global.GHPREVIEW.protocol?.VERSION || 1;
 
   /*
    * Try stronger, more semantic clues before weaker layout clues.
@@ -28,8 +28,7 @@
     ],
     // One item in the switch. Use an unselected item as the visual template.
     viewSwitchItem: 'li[data-component="SegmentedControl.Button"]',
-    // File header toolbar. It defines the boundary for hiding file content and is the
-    // fallback insertion point when the view switch is unavailable.
+    // File header toolbar. It defines the boundary for hiding file content.
     toolbar: [
       '[data-testid="raw-button"]',
       '[data-testid="copy-raw-button"]',
@@ -51,7 +50,15 @@
       return;
     }
     warned.add(key);
-    console.warn('[ghpreview] ' + message);
+    console.warn(
+      '[html-preview] ' +
+        JSON.stringify({
+          event: 'dom-warning',
+          phase: 'dom',
+          errorCode: key,
+          detail: { message },
+        }),
+    );
   }
 
   /** Return the first matching selector. */
@@ -80,16 +87,20 @@
   }
 
   // Mark inserted elements with an attribute rather than an id. The marker belongs to the
-  // cloned item in the view switch and to the link itself in the toolbar fallback.
+  // cloned item in GitHub's file-view switch.
   const LINK_MARK = 'data-ghpreview-link';
   const LINK_SELECTOR = '[' + LINK_MARK + ']';
   const FRAME_ID = 'ghpreview-frame';
   const ERROR_ID = 'ghpreview-error';
+  const TRUST_ID = 'ghpreview-trust';
+  const WARNING_ID = 'ghpreview-warning';
   const FRAME_PENDING_CLASS = 'ghpreview-frame-pending';
-  const FRAME_OVERLAY_CLASS = 'ghpreview-frame-overlay';
+  const FRAME_WARNING_CLASS = 'ghpreview-frame-warning';
   const STYLE_ID = 'ghpreview-style';
   const PREVIEW_TOP_GAP_PX = 32;
   let activeErrorCode = null;
+  let activeTrustCode = null;
+  let activeWarningCode = null;
 
   function findViewSwitch() {
     return findFirst(SELECTORS.viewSwitch);
@@ -99,7 +110,7 @@
    * Add Preview at the start of the Code / Blame switch.
    *
    * Follow the shape GitHub uses for `.md` files. Do not create a separate panel or
-   * toolbar (GOAL.md).
+   * toolbar.
    */
   function insertPreviewLink(handlers) {
     if (document.querySelector(LINK_SELECTOR) !== null) {
@@ -110,13 +121,8 @@
     if (viewSwitch !== null) {
       return insertIntoViewSwitch(viewSwitch, handlers);
     }
-
-    const anchorPoint = findFirst(SELECTORS.toolbar);
-    if (anchorPoint === null) {
-      warn('toolbar', 'The file toolbar was not found; Preview cannot be inserted');
-      return false;
-    }
-    return insertBeside(anchorPoint, handlers);
+    warn('view-switch', 'The GitHub file-view switch was not found; Preview cannot be inserted');
+    return false;
   }
 
   /**
@@ -132,9 +138,8 @@
     const items = Array.from(viewSwitch.querySelectorAll(SELECTORS.viewSwitchItem));
     const spare = items.find(item => !isSelectedItem(item)) || items[0];
     if (spare === null) {
-      warn('view-switch', 'The view switch has no items; falling back beside Raw');
-      const anchorPoint = findFirst(SELECTORS.toolbar);
-      return anchorPoint === null ? false : insertBeside(anchorPoint, handlers);
+      warn('view-switch', 'The GitHub file-view switch has no items; Preview cannot be inserted');
+      return false;
     }
 
     const clone = spare.cloneNode(true);
@@ -151,9 +156,8 @@
 
     const control = clone.matches('a, button') ? clone : clone.querySelector('a, button');
     if (control === null) {
-      warn('view-switch', 'The view switch has no clickable control; falling back beside Raw');
-      const anchorPoint = findFirst(SELECTORS.toolbar);
-      return anchorPoint === null ? false : insertBeside(anchorPoint, handlers);
+      warn('view-switch', 'The GitHub file-view switch has no clickable control; Preview cannot be inserted');
+      return false;
     }
 
     setLabel(clone, control, 'Preview');
@@ -313,25 +317,6 @@
     root.querySelectorAll('*').forEach(handle);
   }
 
-  /** Fallback insertion point beside Raw when the view switch is unavailable. */
-  function insertBeside(anchorPoint, handlers) {
-    const link = document.createElement('a');
-    link.setAttribute(LINK_MARK, '');
-    link.className = 'ghpreview-link';
-    link.href = typeof handlers.href === 'string' ? handlers.href : '#';
-    link.textContent = 'Preview';
-    link.addEventListener('click', event => {
-      const allowDefault = handlers.onPreview(event) === true;
-      if (!allowDefault) {
-        event.preventDefault();
-      }
-    });
-
-    const holder = anchorPoint.closest('div') || anchorPoint.parentElement;
-    holder.parentElement.insertBefore(link, holder.nextSibling);
-    return true;
-  }
-
   function removePreviewLink() {
     document.querySelectorAll(LINK_SELECTOR).forEach(node => node.remove());
   }
@@ -355,6 +340,20 @@
     button.className = className;
     button.textContent = label;
     button.addEventListener('click', handler);
+    return button;
+  }
+
+  function createTrustAction(label, className, handler) {
+    const button = createAction(label, className, () => {
+      if (button.disabled) {
+        return;
+      }
+      button.disabled = true;
+      button.textContent = 'Trusting…';
+      if (typeof handler === 'function') {
+        handler();
+      }
+    });
     return button;
   }
 
@@ -396,6 +395,8 @@
    */
   function showError(details) {
     removeError();
+    removeTrustRequired();
+    removeWarning();
 
     const errorCode = details.code || details.errorCode || 'preview-failed';
     activeErrorCode = errorCode;
@@ -488,8 +489,7 @@
       // the normal placement once more before deciding whether this is an overlay error.
       placeFrame(frame);
       const staged =
-        frame.classList.contains(FRAME_PENDING_CLASS) ||
-        frame.classList.contains(FRAME_OVERLAY_CLASS);
+        frame.classList.contains(FRAME_PENDING_CLASS);
       if (staged && hideContentForPreview()) {
         frame.remove();
         const body = hiddenContainer;
@@ -529,8 +529,230 @@
     activeErrorCode = null;
   }
 
+  /**
+   * Show the explicit repository trust gate without presenting it as a failed Preview.
+   * The source body remains hidden while the user decides; no Worker request or sandbox
+   * frame is started until the trust action succeeds.
+   */
+  function showTrustRequired(details = {}) {
+    removeTrustRequired();
+    removeError();
+    removeWarning();
+
+    const errorCode = details.code || details.errorCode || 'repository-not-allowed';
+    activeTrustCode = errorCode;
+
+    const region = document.createElement('section');
+    region.id = TRUST_ID;
+    region.className = 'ghpreview-trust-region';
+    region.setAttribute('role', 'region');
+    region.setAttribute('aria-labelledby', TRUST_ID + '-title');
+    region.setAttribute('data-preview-error-code', errorCode);
+
+    const surface = document.createElement('div');
+    surface.className = 'ghpreview-trust-surface';
+
+    const heading = document.createElement('div');
+    heading.className = 'ghpreview-trust-heading';
+
+    const icon = document.createElement('span');
+    icon.className = 'ghpreview-trust-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '✓';
+
+    const title = document.createElement('h2');
+    title.id = TRUST_ID + '-title';
+    title.textContent = 'Trust this repository for Preview?';
+    heading.append(icon, title);
+
+    const reason = document.createElement('p');
+    reason.className = 'ghpreview-trust-reason';
+    reason.textContent = details.reason ||
+      'HTML Preview is enabled, but this repository is not trusted yet.';
+
+    const repository = document.createElement('p');
+    repository.className = 'ghpreview-trust-repository';
+    repository.append('Repository: ');
+    const repositoryCode = document.createElement('code');
+    repositoryCode.textContent = details.repository || 'current repository';
+    repository.append(repositoryCode);
+
+    const issues = document.createElement('ul');
+    issues.className = 'ghpreview-trust-issues';
+    ['Only this exact repository will be added.', 'No page content is sent before you trust it.']
+      .forEach(message => {
+        const item = document.createElement('li');
+        item.textContent = message;
+        issues.append(item);
+      });
+
+    surface.append(heading, reason, repository, issues);
+
+    const actions = document.createElement('div');
+    actions.className = 'ghpreview-trust-actions';
+    const trustButton = createTrustAction(
+      'Trust repository',
+      'ghpreview-trust-button ghpreview-trust-button-primary',
+      details.onTrust,
+    );
+    trustButton.dataset.ghpreviewTrust = 'approve';
+    const declineButton = createAction(
+      'Not now',
+      'ghpreview-trust-button ghpreview-trust-button-secondary',
+      details.onDecline,
+    );
+    declineButton.dataset.ghpreviewTrust = 'decline';
+    actions.append(trustButton, declineButton);
+    surface.append(actions);
+
+    const note = document.createElement('p');
+    note.className = 'ghpreview-trust-note';
+    note.textContent = 'You can review or remove trusted repositories from the extension popup.';
+    surface.append(note);
+
+    const diagnostic = document.createElement('p');
+    diagnostic.className = 'ghpreview-trust-diagnostic';
+    diagnostic.append('Trust status: ');
+    const code = document.createElement('code');
+    code.textContent = errorCode;
+    diagnostic.append(code);
+    surface.append(diagnostic);
+
+    region.append(surface);
+
+    const frame = document.getElementById(FRAME_ID);
+    if (frame !== null) {
+      placeFrame(frame);
+      const staged = frame.classList.contains(FRAME_PENDING_CLASS);
+      if (staged && hideContentForPreview()) {
+        frame.remove();
+        const body = hiddenContainer;
+        applyPreviewTopOffset(region, body.parentElement);
+        body.parentElement.insertBefore(region, body);
+        setPreviewMetadata({ ...details, state: 'trust-required', errorCode });
+        return true;
+      }
+      if (staged) {
+        region.classList.add('ghpreview-trust-overlay');
+      }
+      applyPreviewTopOffset(region, frame.parentElement);
+      frame.replaceWith(region);
+      setPreviewMetadata({ ...details, state: 'trust-required', errorCode });
+      return true;
+    }
+
+    if (hideContentForPreview()) {
+      const body = hiddenContainer;
+      applyPreviewTopOffset(region, body.parentElement);
+      body.parentElement.insertBefore(region, body);
+      setPreviewMetadata({ ...details, state: 'trust-required', errorCode });
+      return true;
+    }
+
+    region.classList.add('ghpreview-trust-overlay');
+    (document.body || document.documentElement).appendChild(region);
+    setPreviewMetadata({ ...details, state: 'trust-required', errorCode });
+    return true;
+  }
+
+  function removeTrustRequired() {
+    const surface = document.getElementById(TRUST_ID);
+    if (surface !== null) {
+      surface.remove();
+    }
+    activeTrustCode = null;
+  }
+
+  function hasTrustRequired() {
+    return document.getElementById(TRUST_ID) !== null;
+  }
+
+  /**
+   * Show a non-destructive warning while keeping the rendered document visible.
+   * Runtime errors are a property of the document, not a reason to discard its UI.
+   */
+  function showRuntimeWarning(details = {}) {
+    removeTrustRequired();
+    removeWarning();
+
+    const errorCode = details.code || details.errorCode || 'sandbox-runtime-error';
+    activeWarningCode = errorCode;
+
+    const region = document.createElement('aside');
+    region.id = WARNING_ID;
+    region.className = 'ghpreview-runtime-warning';
+    region.setAttribute('role', 'status');
+    region.setAttribute('aria-live', 'polite');
+    region.setAttribute('data-preview-error-code', errorCode);
+
+    const heading = document.createElement('div');
+    heading.className = 'ghpreview-runtime-warning-heading';
+
+    const icon = document.createElement('span');
+    icon.className = 'ghpreview-runtime-warning-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = '!';
+
+    const title = document.createElement('strong');
+    title.textContent = 'Preview warning';
+    heading.append(icon, title);
+
+    const reason = document.createElement('p');
+    reason.className = 'ghpreview-runtime-warning-reason';
+    reason.textContent = details.reason || 'The document reported a runtime error after rendering.';
+
+    const diagnostic = document.createElement('span');
+    diagnostic.className = 'ghpreview-runtime-warning-diagnostic';
+    diagnostic.textContent = errorCode;
+
+    region.append(heading, reason, diagnostic);
+
+    const frame = document.getElementById(FRAME_ID);
+    if (frame !== null && frame.parentElement !== null) {
+      placeFrame(frame);
+      frame.classList.add(FRAME_WARNING_CLASS);
+      applyPreviewTopOffset(region, frame.parentElement);
+      frame.parentElement.insertBefore(region, frame);
+      setPreviewMetadata({
+        state: details.state || 'ready',
+        errorCode,
+        requestId: details.requestId,
+        sessionId: details.sessionId,
+      });
+      return true;
+    }
+
+    // Runtime errors are expected after the frame is mounted. Keep a safe fallback for a
+    // race during teardown without hiding or replacing any host-page content.
+    region.classList.add('ghpreview-runtime-warning-overlay');
+    (document.body || document.documentElement).appendChild(region);
+    setPreviewMetadata({
+      state: details.state || 'ready',
+      errorCode,
+      requestId: details.requestId,
+      sessionId: details.sessionId,
+    });
+    return true;
+  }
+
+  function removeWarning() {
+    const surface = document.getElementById(WARNING_ID);
+    if (surface !== null) {
+      surface.remove();
+    }
+    const frame = document.getElementById(FRAME_ID);
+    if (frame !== null) {
+      frame.classList.remove(FRAME_WARNING_CLASS);
+    }
+    activeWarningCode = null;
+  }
+
   function hasError() {
     return document.getElementById(ERROR_ID) !== null;
+  }
+
+  function hasWarning() {
+    return document.getElementById(WARNING_ID) !== null;
   }
 
   function hasPreviewLink() {
@@ -550,17 +772,28 @@
     const frame = document.getElementById(FRAME_ID);
     if (
       frame !== null &&
-      (frame.classList.contains(FRAME_PENDING_CLASS) || frame.classList.contains(FRAME_OVERLAY_CLASS))
+      frame.classList.contains(FRAME_PENDING_CLASS)
     ) {
       return true;
     }
     const error = document.getElementById(ERROR_ID);
-    return error !== null && error.classList.contains('ghpreview-error-overlay');
+    if (error !== null && error.classList.contains('ghpreview-error-overlay')) {
+      return true;
+    }
+    const trust = document.getElementById(TRUST_ID);
+    return trust !== null && trust.classList.contains('ghpreview-trust-overlay');
   }
 
   function getErrorCode() {
     const region = document.getElementById(ERROR_ID);
-    return region?.getAttribute('data-preview-error-code') || activeErrorCode;
+    return (
+      region?.getAttribute('data-preview-error-code') ||
+      activeErrorCode ||
+      document.getElementById(TRUST_ID)?.getAttribute('data-preview-error-code') ||
+      activeTrustCode ||
+      document.getElementById(WARNING_ID)?.getAttribute('data-preview-error-code') ||
+      activeWarningCode
+    );
   }
 
   /**
@@ -575,6 +808,8 @@
       document.documentElement,
       document.getElementById(FRAME_ID),
       document.getElementById(ERROR_ID),
+      document.getElementById(TRUST_ID),
+      document.getElementById(WARNING_ID),
     ].filter(Boolean);
     const attributes = [
       ['data-preview-state', metadata.state],
@@ -610,6 +845,23 @@
     }
     const body = hiddenContainer;
     region.classList.remove('ghpreview-error-overlay');
+    if (body.parentElement !== null) {
+      applyPreviewTopOffset(region, body.parentElement);
+      body.parentElement.insertBefore(region, body);
+    }
+    return true;
+  }
+
+  function reconcileTrust() {
+    const region = document.getElementById(TRUST_ID);
+    if (region === null || !region.classList.contains('ghpreview-trust-overlay')) {
+      return region !== null;
+    }
+    if (!hideContentForPreview()) {
+      return false;
+    }
+    const body = hiddenContainer;
+    region.classList.remove('ghpreview-trust-overlay');
     if (body.parentElement !== null) {
       applyPreviewTopOffset(region, body.parentElement);
       body.parentElement.insertBefore(region, body);
@@ -655,7 +907,7 @@
 
   function sandboxPolicy(capabilities = {}) {
     // The bundled bootstrap always needs allow-scripts to start. The javascript setting
-    // controls repository scripts separately in inlineDocument; it must not disable the
+    // controls repository scripts separately in prepareDocument; it must not disable the
     // bootstrap that enforces the opaque-origin message boundary.
     const tokens = ['allow-scripts'];
     if (capabilities.modals === true) {
@@ -678,7 +930,7 @@
   function placeFrame(frame) {
     const container = findFirst(SELECTORS.content);
     if (container === null) {
-      frame.classList.remove('ghpreview-frame-inline', FRAME_OVERLAY_CLASS);
+      frame.classList.remove('ghpreview-frame-inline');
       frame.classList.add(FRAME_PENDING_CLASS);
       frame.setAttribute('aria-hidden', 'true');
       return false;
@@ -689,7 +941,7 @@
       return false;
     }
 
-    frame.classList.remove(FRAME_PENDING_CLASS, FRAME_OVERLAY_CLASS);
+    frame.classList.remove(FRAME_PENDING_CLASS);
     frame.classList.add('ghpreview-frame-inline');
     frame.removeAttribute('aria-hidden');
     applyPreviewTopOffset(frame, body.parentElement);
@@ -764,8 +1016,8 @@
     const frame = document.createElement('iframe');
     frame.id = FRAME_ID;
     frame.setAttribute('sandbox', policy);
-    // Set the known bundled entry point before insertion, matching the baseline startup
-    // path. The callback lets the parent subscribe before the browsing context starts.
+    // Set the known bundled entry point before insertion. The callback lets the parent
+    // subscribe before the browsing context starts.
     frame.src = sandboxUrl;
     if (typeof beforeInsert === 'function') {
       beforeInsert(frame, true);
@@ -810,6 +1062,8 @@
       frame.remove();
     }
     removeError();
+    removeTrustRequired();
+    removeWarning();
     if (hiddenContainer !== null) {
       hiddenContainer.style.display = '';
       hiddenContainer = null;
@@ -820,13 +1074,12 @@
   }
 
   /**
-   * Fold fetched HTML into one document without relative resource references.
+   * Prepare the validated HTML for the sandbox.
    *
-   * DOMParser avoids differences in attribute quoting, casing, and line breaks. String
-   * replacement would eventually miss a form. This document is detached, so nothing runs
-   * during parsing.
-   *
-   * @param load returns {text, dataUri} for a URL, or null when it cannot be loaded
+   * Validation has already rejected every relative or external resource. This step must
+   * not fetch or inline anything; it only removes repository scripts and inline handlers
+   * when the corresponding capability is disabled, removes a document base element that
+   * could change navigation resolution, and adds the parent height reporter.
    */
   function applyCapabilities(doc, capabilities = {}) {
     if (capabilities.javascript === true) {
@@ -846,35 +1099,17 @@
     });
   }
 
-  async function inlineDocument(htmlText, base, load, sessionId = '', capabilities = {}) {
+  function prepareDocument(htmlText, sessionId = '', capabilities = {}) {
     const doc = new DOMParser().parseFromString(htmlText, 'text/html');
-    const notes = [];
 
     applyCapabilities(doc, capabilities);
 
     // A remaining <base> could redirect an unresolved reference unexpectedly.
     doc.querySelectorAll('base').forEach(element => element.remove());
 
-    for (const rule of inline.RULES) {
-      const elements = Array.from(doc.querySelectorAll(rule.select));
-      for (const element of elements) {
-        await applyRule(element, rule, base, load, notes);
-      }
-    }
-
-    // Rewrite url() values in inline <style> elements too.
-    const styles = Array.from(doc.querySelectorAll('style'));
-    for (const style of styles) {
-      const rewritten = await inline.rewriteCssUrls(style.textContent, base, url =>
-        load(url).then(got => (got === null ? null : got.dataUri)),
-      );
-      style.textContent = rewritten.text;
-      notes.push(...rewritten.notes);
-    }
-
     addHeightReporter(doc, sessionId);
 
-    return { html: '<!doctype html>\n' + doc.documentElement.outerHTML, notes };
+    return '<!doctype html>\n' + doc.documentElement.outerHTML;
   }
 
   /*
@@ -891,7 +1126,7 @@
     '  var sessionId = __GHPREVIEW_SESSION_ID__;',
     '  var renderReady = false;',
     '  function post(type, payload){',
-    '    parent.postMessage(Object.assign({ type: type, sessionId: sessionId }, payload || {}), "https://github.com");',
+    '    parent.postMessage(Object.assign({ protocolVersion: __GHPREVIEW_PROTOCOL_VERSION__, type: type, sessionId: sessionId }, payload || {}), "https://github.com");',
     '  }',
     '  function announceReady(){',
     '    if (renderReady) { return; }',
@@ -934,7 +1169,7 @@
     script.textContent = HEIGHT_REPORTER.replace(
       '__GHPREVIEW_SESSION_ID__',
       JSON.stringify(typeof sessionId === 'string' ? sessionId : ''),
-    );
+    ).replace('__GHPREVIEW_PROTOCOL_VERSION__', String(PROTOCOL_VERSION));
     (doc.head || doc.body || doc.documentElement).appendChild(script);
   }
 
@@ -953,8 +1188,7 @@
       return;
     }
     if (
-      frame.classList.contains(FRAME_PENDING_CLASS) ||
-      frame.classList.contains(FRAME_OVERLAY_CLASS)
+      frame.classList.contains(FRAME_PENDING_CLASS)
     ) {
       return;
     }
@@ -967,60 +1201,6 @@
     }
     appliedHeight = Math.ceil(height) + SLACK_PX;
     frame.style.height = appliedHeight + 'px';
-  }
-
-  async function applyRule(element, rule, base, load, notes) {
-    const value = element.getAttribute(rule.attribute);
-
-    if (rule.as === 'srcset') {
-      const rewritten = await inline.rewriteSrcset(value, base, url =>
-        load(url).then(got => (got === null ? null : got.dataUri)),
-      );
-      element.setAttribute(rule.attribute, rewritten.value);
-      notes.push(...rewritten.notes);
-      return;
-    }
-
-    const decided = inline.classify(value, base);
-    if (decided.kind === 'unsupported') {
-      notes.push(decided.reason);
-      return;
-    }
-    if (decided.kind !== 'inline') {
-      return;
-    }
-
-    const got = await load(decided.url);
-    if (got === null) {
-      notes.push('Could not load reference: ' + value);
-      return;
-    }
-
-    if (rule.as === 'css') {
-      const rewritten = await inline.rewriteCssUrls(got.text, decided.url, url =>
-        load(url).then(inner => (inner === null ? null : inner.dataUri)),
-      );
-      notes.push(...rewritten.notes);
-      const style = element.ownerDocument.createElement('style');
-      style.textContent = rewritten.text;
-      element.replaceWith(style);
-      return;
-    }
-
-    if (rule.as === 'js') {
-      const script = element.ownerDocument.createElement('script');
-      // Preserve execution attributes such as type and defer, but remove src.
-      Array.from(element.attributes).forEach(attribute => {
-        if (attribute.name !== 'src') {
-          script.setAttribute(attribute.name, attribute.value);
-        }
-      });
-      script.textContent = inline.escapeScriptText(got.text);
-      element.replaceWith(script);
-      return;
-    }
-
-    element.setAttribute(rule.attribute, got.dataUri);
   }
 
   global.GHPREVIEW.githubDom = {
@@ -1037,6 +1217,12 @@
     showError,
     removeError,
     hasError,
+    showTrustRequired,
+    removeTrustRequired,
+    hasTrustRequired,
+    showRuntimeWarning,
+    removeWarning,
+    hasWarning,
     hasPreviewLink,
     hasFrame,
     needsReconcile,
@@ -1044,8 +1230,9 @@
     getErrorCode,
     setPreviewMetadata,
     reconcileError,
+    reconcileTrust,
     resizeFrame,
-    inlineDocument,
+    prepareDocument,
     warn,
   };
 })(typeof window === 'undefined' ? globalThis : window);

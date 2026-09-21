@@ -8,6 +8,7 @@
 (function initSandbox() {
   'use strict';
 
+  const { protocol } = globalThis.GHPREVIEW;
   const PREFIX = 'ghpreview:';
   const PARENT_ORIGIN = 'https://github.com';
   const BOOTSTRAP = PREFIX + 'sandbox-bootstrap';
@@ -16,10 +17,11 @@
   const RENDER = PREFIX + 'render';
   const RENDER_STARTED = PREFIX + 'render-started';
   const RUNTIME_ERROR = PREFIX + 'runtime-error';
+  const RENDER_FAILED = PREFIX + 'render-failed';
   const sessionId = new URL(window.location.href).searchParams.get('session') || '';
 
   function post(type, detail) {
-    window.parent.postMessage({ type, sessionId, ...(detail || {}) }, 'https://github.com');
+    window.parent.postMessage(protocol.create(type, sessionId, detail), 'https://github.com');
   }
 
   let runtimeErrorReported = false;
@@ -68,7 +70,7 @@
     if (event.origin !== PARENT_ORIGIN) {
       return;
     }
-    if (!event.data) {
+    if (!protocol.isMessage(event.data)) {
       return;
     }
     if (event.data.sessionId !== sessionId) {
@@ -97,9 +99,22 @@
 
     post(RENDER_STARTED);
     window.removeEventListener('message', onMessage);
-    document.open();
-    document.write(event.data.html);
-    document.close();
+    try {
+      document.open();
+      document.write(event.data.html);
+      document.close();
+    } catch (error) {
+      console.warn(
+        '[html-preview] ' +
+          JSON.stringify({
+            event: 'render-failed',
+            phase: 'sandbox',
+            sessionId,
+            errorCode: 'render-failed',
+          }),
+      );
+      post(RENDER_FAILED, { errorCode: 'render-failed' });
+    }
   }
 
   window.addEventListener('message', onMessage);

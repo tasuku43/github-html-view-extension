@@ -1,38 +1,41 @@
-# GitHub HTML preview extension
+# HTML Preview extension runtime
 
-This unpacked Chrome MV3 extension previews HTML documents stored on GitHub. It is the
-known-good JavaScript baseline that will be kept as a reference while the maintainable
-TypeScript implementation is developed incrementally.
+This directory is the checked-in Chrome MV3 runtime. Load this directory directly as an
+unpacked extension while developing and testing the product described in the repository
+root's [product specification](../docs/specification.md).
 
-## What it does
+## Supported behavior
 
-- Previews allowlisted `.html`, `.htm`, and `.xhtml` files on GitHub.
-- Adds `Preview` beside GitHub's `Code` and `Blame` controls.
-- Keeps Code and Blame available when Preview is selected.
-- Can run classic inline JavaScript inside an opaque-origin sandbox iframe when enabled.
-- Inlines supported relative CSS, JavaScript, images, and other binary resources.
-- Uses `?plain=1` for the source view and accepts `#preview` links from the earlier baseline.
+- Preview explicitly trusted `.html`, `.htm`, and `.xhtml` files on GitHub Blob and Blame pages.
+- Keep `Preview`, `Code`, and `Blame` available in GitHub's existing file-view control.
+- Render only self-contained HTML in the extension-bundled `sandbox.html` page.
+- Run inline classic JavaScript only when the Popup capability is enabled.
+- Keep forms visible and editable while native submission and popup creation remain disabled.
+- Show designed English failure surfaces without exposing source HTML or private context.
 
-Markdown and GitHub hosts other than `github.com` are not supported.
+Markdown, SVG, notebooks, pull-request file views, GitHub Enterprise, wildcard allowlists,
+and repository-side configuration are outside the product scope.
 
-## Load the baseline
+## Load the extension
 
 1. Open `chrome://extensions` in Chrome.
 2. Enable Developer mode.
 3. Select **Load unpacked** and choose this directory.
-4. Click the extension icon to open the Action Popup.
-5. Enable HTML Preview and add an exact `owner/repository` entry.
-6. Open an allowlisted HTML file on a GitHub blob page.
+4. Open the Action Popup from the extension icon.
+5. Enable HTML Preview.
+6. Open an HTML file on GitHub and select Preview.
+7. Trust the exact current repository from the Preview surface, or add it in the Popup first.
 
-Preview is disabled until the master switch is enabled. An empty allowlist enables no
-repository. Wildcards such as `owner/*` are rejected. Matching ignores letter case but
-requires every other character to match exactly.
+Preview is disabled until the master switch is enabled. An empty allowlist shows an explicit
+trust decision when Preview is selected; it does not fetch or render until the user trusts
+the exact current repository. Wildcards such as `owner/*` are rejected. Matching ignores
+letter case while requiring every other character to match exactly.
 
 ## Diagnose a stalled preview
 
-Open the GitHub page's DevTools console and filter for `[html-preview]`. Lifecycle entries
-are structured JSON, so the `event`, `phase`, `requestId`, `sessionId`, and `errorCode`
-fields can be followed without exposing the HTML source or repository details.
+Open the GitHub page's DevTools console and filter for `[html-preview]`. Structured entries
+include the event, phase, request ID, session ID, and safe error code without exposing source
+HTML, complete URLs, repository values, or credentials.
 
 The current state is also available from the page DOM:
 
@@ -43,42 +46,30 @@ document.documentElement.dataset.previewRequestId
 document.documentElement.dataset.previewSessionId
 ```
 
-The same `data-preview-*` attributes are copied to `#ghpreview-frame` or
-`#ghpreview-error` when that surface exists. Useful checkpoints are:
+The same `data-preview-*` attributes are copied to the iframe, failure surface, or runtime
+warning when that surface exists. Useful checkpoints are:
 
 - `waiting-for-sandbox`: the bundled iframe is mounted, but the matching sandbox handshake
   has not completed.
+- `trust-required`: Preview is enabled for the extension, but the exact current repository
+  has not been trusted. No source fetch or sandbox frame should exist in this state.
 - `rendering`: the parent sent the prepared document; look for `render-started` next.
-- `waiting-for-height`: the sandbox finished rendering, but the parent is still waiting for
-  a usable height notification.
-- `failed`: inspect `data-preview-error-code` and the matching `preview-failed` entry.
+- `waiting-for-height`: rendering completed, but the parent is still waiting for a usable
+  height notification.
+- `ready` with `data-preview-error-code="sandbox-runtime-error"`: the document rendered,
+  but its runtime warning is visible without removing the document.
+- `failed`: inspect the error code and the matching `preview-failed` entry.
 
 `Recheck` clears the in-memory response cache and starts a fresh Worker request.
 
-Browser E2E uses the `[html-preview]` console stream as its primary evidence. It follows the
-transition facts (`native-navigation-started`, `view-transition-host-settled`,
-`preview-transition-committed`, and `view-selection-applied`) instead of treating a post-load
-selected-tab class or a screenshot as a contract. A lightweight animation-frame trace is used
-only for the narrow no-intermediate-tab assertion; the extension keeps one GitHub-owned view
-switch and does not paint a cloned overlay during navigation.
+## Security boundary
 
-## Security notes
+Repository HTML is rendered only in the opaque-origin sandbox iframe. The iframe entry is
+the extension-bundled `sandbox.html` page with a session query parameter; it is not
+`about:blank`, `srcdoc`, or a content-script-generated bootstrap. The iframe never receives
+`allow-same-origin`.
 
-Adding a repository allows JavaScript from its HTML files to run when previewed. The code
-runs in the extension's opaque-origin sandbox and cannot access the GitHub page DOM,
-cookies, or extension APIs. Keep the allowlist narrow and intentional.
-
-The iframe entry point is the extension-bundled `sandbox.html`; do not replace it with
-`about:blank`, `srcdoc`, or dynamically injected scripts without a separate security and
-handshake review.
-
-## Baseline limitations
-
-- Module scripts, dynamic imports, page-origin `fetch`, and root-absolute paths are not
-  supported.
-- `@import` and resources nested beyond the supported inlining pass are left unresolved.
-- A file or resource larger than the worker's 8 MB limit is rejected.
-- Pull-request file views and GitHub Enterprise hosts are outside the baseline.
-
-For the detailed behavior contract, read `SPEC.md`. For selector evidence, read
-`DOM-HOOKS.md`. For the architecture rationale, read `MODEL.md`.
+The HTML policy rejects relative and external resources, module scripts, embedded frames,
+network APIs, unsafe navigation schemes, and other active network paths before rendering.
+Only safe passive `data:` media is accepted. The Worker rechecks the exact repository
+allowlist before every fetch.

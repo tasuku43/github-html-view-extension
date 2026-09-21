@@ -61,6 +61,8 @@ test('tracks lifecycle phases without accepting unknown states', () => {
 
   assert.equal(previewSession.setPhase(session, 'fetching'), true);
   assert.equal(session.phase, 'fetching');
+  assert.equal(previewSession.setPhase(session, 'trust-required'), true);
+  assert.equal(session.phase, 'trust-required');
   assert.equal(previewSession.setPhase(session, 'unknown'), false);
-  assert.equal(session.phase, 'fetching');
+  assert.equal(session.phase, 'trust-required');
 });

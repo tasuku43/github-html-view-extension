@@ -1,74 +1,79 @@
-# Baseline architecture model
+# Runtime boundary notes
 
-This file explains why the working baseline is arranged as it is. `README.md` describes
-usage, `GOAL.md` defines scope, and `SPEC.md` contains the fuller product direction.
+The repository root's `docs/specification.md` is the product contract. This file records
+the current runtime boundaries that implement that contract; it is not a second product
+specification.
 
 ## Trust and execution
 
-The extension trusts only repositories that the user explicitly adds to the allowlist.
-GitHub remains responsible for determining whether the current viewer can read a file;
-the extension does not store credentials or reimplement authorization.
+The user explicitly trusts repositories either from the Preview surface or in the Action
+Popup. The Popup remains the review and removal surface. GitHub remains responsible for
+deciding whether the current viewer can read a file. The extension does not store credentials
+or reimplement GitHub authorization.
 
-Preview code runs in an opaque-origin sandbox rather than on `github.com`. This prevents
-repository HTML from accessing the GitHub DOM, cookies, or extension APIs. `allow-same-
-origin` is intentionally absent from both the iframe and the sandbox policy.
+Preview HTML runs in an opaque-origin sandbox rather than on `github.com`. This prevents the
+rendered document from accessing the GitHub DOM, cookies, or extension APIs. The iframe keeps
+`allow-scripts` for the bundled bootstrap and never receives `allow-same-origin`.
 
-## Sandbox entry point
+## Sandbox entry point and protocol
 
-`manifest.json` lists `sandbox.html` in the MV3 sandbox section. The content script mounts
-that extension-owned page as the iframe entry point and sends the prepared HTML through
-`postMessage`. The sandbox announces `ghpreview:sandbox-bootstrap` and
-`ghpreview:sandbox-ready` before it accepts one render message. After iframe load, the
-parent can send `ghpreview:sandbox-ping` to request another ready signal. The sandbox then
-opens the document with `document.open()`, `document.write()`, and `document.close()` so
-classic inline scripts execute.
+The manifest declares the extension-bundled `sandbox.html` page. The content script mounts
+that page with a `session` query parameter and sends the already validated document through
+`postMessage`. It never uses `about:blank`, `srcdoc`, dynamically injected bootstrap markup,
+or dynamic script injection.
 
-The parent removes any unexpected `srcdoc` attribute before using the frame. `srcdoc` takes
-precedence over `src`, so leaving an empty attribute in place would load `about:srcdoc`
-instead of the bundled sandbox page.
+The parent and sandbox validate:
 
-The parent validates `event.source === frame.contentWindow`. The sandbox validates both
-`event.source === window.parent` and `event.origin === 'https://github.com'`. The sandbox
-origin itself is opaque, so its origin string is not used as proof of identity.
+- the expected message source;
+- the expected parent or opaque origin;
+- protocol version `1`;
+- the matching session ID.
 
-Each preview request has a generated request ID and each sandbox mount has a generated
-session ID. The IDs are attached to the Preview surface as `data-preview-request-id` and
-`data-preview-session-id`, and to lifecycle logs. They are correlation identifiers only;
-they never contain a URL, repository name, document text, or credential.
+The sandbox reports bootstrap, ready, render-started, render-ready, runtime-error, and
+render-failed milestones. The parent reports frame creation, frame load, message rejection,
+height receipt, and lifecycle state changes through the structured diagnostics contract.
 
-## Fetching and inlining
+## Fetch boundary and HTML policy
 
-The service worker fetches `https://github.com/{owner}/{repository}/raw/{refAndPath}` with
-the viewer's cookies. It is the only outbound fetch path because GitHub's raw response can
-redirect to another host and a content-script fetch would be subject to page CORS rules.
+The service worker is the only network fetch boundary. It derives the GitHub raw file URL
+from the sender's current page, rechecks the global setting and exact repository allowlist,
+and returns a typed success or failure code. The content script never fetches arbitrary URLs
+directly.
 
-The URL parser keeps the portion after `blob/` or `blame/` intact. Branch names can contain
-slashes, so splitting ref and path from the URL alone would be guesswork. Relative
-resources are resolved against the raw URL and supported resources are folded into the
-detached document before it reaches the sandbox.
+The fetched source is validated before it reaches the sandbox. Relative resources, external
+resources, external or module scripts, link elements, embedded frames, CSS imports, network
+APIs, unsafe navigation schemes, and unsafe data URLs are rejected. Safe passive media data
+URLs and same-document fragment links are allowed. No subresource inlining or source cache
+is part of the product contract.
+
+When JavaScript is disabled, repository scripts and inline event handlers are removed before
+rendering. When it is enabled, only inline classic scripts are allowed. Forms remain visible
+and editable, but the sandbox policy does not grant form submission or popup creation.
 
 ## Module responsibilities
 
 | Module | Responsibility |
 | --- | --- |
+| `src/lib/protocol.js` | Version and validate parent/sandbox messages. |
 | `src/lib/blob-url.js` | Parse GitHub file URLs and build view/raw URLs. |
-| `src/lib/view-transition.js` | Describe Blob/Blame/Code/Preview states and plan view changes without touching the DOM. |
-| `src/lib/preview-session.js` | Own request/session identity, generation, lifecycle phase, and stale-operation invalidation. |
-| `src/lib/allowlist.js` | Parse, validate, and match exact repository entries. |
-| `src/lib/settings.js` | Normalize the disabled-by-default settings object and repository list. |
-| `src/lib/inline.js` | Classify references and rewrite CSS/srcset values. |
-| `src/github/dom.js` | Insert controls, mount the frame, inline detached HTML, and resize it. |
-| `src/preview.js` | Coordinate settings, navigation, fetches, and sandbox handoff. |
-| `src/worker.js` | Validate requests and fetch GitHub content. |
-| `sandbox.html` / `sandbox.js` | Provide the isolated render surface and handshake. |
-| `popup.html` / `popup.js` | Edit settings and the exact repository allowlist. |
+| `src/lib/view-transition.js` | Describe supported Blob, Blame, Code, and Preview states. |
+| `src/lib/view-coordinator.js` | Coordinate user intent with GitHub's native view replacement. |
+| `src/lib/preview-session.js` | Own request/session identity, lifecycle phase, and stale invalidation. |
+| `src/lib/settings.js` | Normalize settings shared by Popup, content script, and Worker. |
+| `src/lib/inline.js` | Validate the self-contained HTML policy. |
+| `src/github/dom.js` | Insert controls, mount the sandbox frame, render failure/warning surfaces, and resize it. |
+| `src/preview.js` | Coordinate settings, navigation, fetches, lifecycle, and sandbox handoff. |
+| `src/worker.js` | Validate trust/fetch requests, persist exact trust, and fetch GitHub content. |
+| `sandbox.html` / `sandbox.js` | Provide the isolated render surface and versioned handshake. |
+| `popup.html` / `popup.js` | Edit settings and review or remove exact trusted repositories. |
 
-## GitHub navigation
+## Navigation and lifecycle
 
-GitHub uses SPA-style DOM replacement. The baseline observes DOM mutations and compares the
-current URL rather than relying on undocumented transition event names. This is deliberately
-simple. Lifecycle state is exposed through `data-preview-state` on the active Preview
-surface (and on the page root during transitions). The state values include `idle`,
-`detecting`, `checking-settings`, `fetching`, `validating`, `mounting`,
-`waiting-for-sandbox`, `rendering`, `waiting-for-height`, `ready`, `disabled`, `failed`,
-and `stale`.
+GitHub uses SPA-style DOM replacement. The content script observes DOM mutations and URL
+changes, preserves one native-looking Preview peer, and removes stale surfaces before the
+next operation. An untrusted repository uses a dedicated `trust-required` Preview surface;
+no source fetch or sandbox frame starts until the user explicitly approves the exact current
+repository. The lifecycle state is projected onto the page root and active Preview surface
+through `data-preview-*` attributes. Runtime warnings preserve the frame and its `ready`
+state; fetch, policy, communication, render, and height failures use the designed failure
+surface.

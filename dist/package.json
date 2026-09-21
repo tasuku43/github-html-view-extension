@@ -1,7 +1,7 @@
 {
-  "name": "ghpreview",
+  "name": "github-html-preview-runtime",
   "private": true,
-  "description": "Preview HTML files from explicitly allowlisted GitHub repositories.",
+  "description": "Preview HTML files from explicitly trusted GitHub repositories.",
   "scripts": {
     "test": "node --test \"test/*.test.mjs\""
   }

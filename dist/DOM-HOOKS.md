@@ -6,7 +6,8 @@ stable extension API, so these hooks must be rechecked when the UI changes.
 
 ## Verification method
 
-1. Open an allowlisted HTML file on a GitHub blob page.
+1. Open an explicitly trusted HTML file on a GitHub blob page, or use the inline trust
+   surface when the repository has not been trusted yet.
 2. Inspect the live DOM after GitHub has finished replacing its page regions.
 3. Check the candidates below in order and update `SELECTORS` only with observed evidence.
 4. Verify both public and authenticated views when possible.
@@ -28,20 +29,21 @@ The cloned item must update both visible text and `data-text`. GitHub's selected
 bold, so changing only the visible text can shift the control when it becomes active.
 Generated class names are intentionally not used.
 
-## Toolbar fallback
+## File toolbar boundary
 
-If the view switch cannot be found, the baseline inserts Preview next to the Raw controls.
-The toolbar also defines the boundary between the file header and the file body.
+The toolbar defines the boundary between the file header and the file body. It is not an
+alternative insertion point for Preview: the extension only adds Preview to GitHub's
+existing Code / Blame file-view control.
 
 | Selector | Observation |
 | --- | --- |
 | `[data-testid="raw-button"]` | Preferred Raw anchor. |
-| `[data-testid="copy-raw-button"]` | Raw toolbar fallback. |
+| `[data-testid="copy-raw-button"]` | Toolbar boundary fallback. |
 | `[aria-label="Raw"]` | Semantic fallback. |
 
 ## File-content container
 
-The matched content container is hidden and replaced by the preview iframe. The baseline
+The matched content container is hidden and replaced by the preview iframe. The integration
 walks upward until the parent contains the toolbar, so line-number columns are hidden with
 the code body instead of remaining below the preview.
 

@@ -30,6 +30,8 @@ const DEBUG = process.env.GHPREVIEW_E2E_DEBUG === '1';
 const TRACE_TRANSITIONS = process.env.GHPREVIEW_E2E_TRACE_TRANSITIONS === '1';
 const TRACE_STARTUP = process.env.GHPREVIEW_E2E_TRACE_STARTUP === '1';
 const PRESERVE_TARGET_VIEW = process.env.GHPREVIEW_E2E_PRESERVE_TARGET_VIEW === '1';
+const TRUST_FLOW = process.env.GHPREVIEW_E2E_TRUST_FLOW === '1';
+const SECOND_TRUST_URL = process.env.GHPREVIEW_E2E_SECOND_URL || '';
 const EXPECTED_INITIAL_VIEW = (
   process.env.GHPREVIEW_E2E_EXPECT_INITIAL_VIEW ||
   (PRESERVE_TARGET_VIEW ? 'code' : 'preview')
@@ -119,7 +121,7 @@ async function findExtensionWorker(context) {
     for (const worker of context.serviceWorkers()) {
       try {
         const manifest = await worker.evaluate(() => chrome.runtime.getManifest());
-        if (manifest && manifest.name === 'ghpreview') {
+        if (manifest && manifest.name === 'HTML Preview') {
           return worker;
         }
       } catch {
@@ -143,7 +145,7 @@ async function openSettingsPopup(context, extensionId) {
   return popup;
 }
 
-async function configureSettingsThroughPopup(context, worker) {
+async function configureSettingsThroughPopup(context, worker, { addRepository = true } = {}) {
   const extensionId = new URL(worker.url()).hostname;
   const popup = await openSettingsPopup(context, extensionId);
 
@@ -181,59 +183,61 @@ async function configureSettingsThroughPopup(context, worker) {
     'An invalid repository must not be stored.',
   );
 
-  await popup.locator('#repository-input').fill(repository);
-  await popup.locator('.add-button').click();
-  const repositoryItem = popup.locator(`[data-repository="${repository}"]`);
-  await repositoryItem.waitFor({ state: 'attached', timeout: TIMEOUT });
+  if (addRepository) {
+    await popup.locator('#repository-input').fill(repository);
+    await popup.locator('.add-button').click();
+    const repositoryItem = popup.locator(`[data-repository="${repository}"]`);
+    await repositoryItem.waitFor({ state: 'attached', timeout: TIMEOUT });
 
-  await popup.locator('#repository-input').fill(repository);
-  await popup.locator('.add-button').click();
-  await waitFor('duplicate repository error', async () => {
-    return (await popup.locator('#repository-error').innerText()).includes('already approved');
-  });
-  assert(
-    (await popup.locator('#repository-list > li').count()) === 1,
-    'A duplicate repository must not create a second entry.',
-  );
+    await popup.locator('#repository-input').fill(repository);
+    await popup.locator('.add-button').click();
+    await waitFor('duplicate repository error', async () => {
+      return (await popup.locator('#repository-error').innerText()).includes('already trusted');
+    });
+    assert(
+      (await popup.locator('#repository-list > li').count()) === 1,
+      'A duplicate repository must not create a second entry.',
+    );
 
-  await repositoryItem.locator('[data-remove-repository]').click();
-  await waitFor('repository removal', async () => {
-    return (await popup.locator('#repository-list > li').count()) === 0;
-  });
+    await repositoryItem.locator('[data-remove-repository]').click();
+    await waitFor('repository removal', async () => {
+      return (await popup.locator('#repository-list > li').count()) === 0;
+    });
 
-  await popup.locator('#repository-input').fill(repository);
-  await popup.locator('.add-button').click();
-  await popup.locator(`[data-repository="${repository}"]`).waitFor({
-    state: 'attached',
-    timeout: TIMEOUT,
-  });
-  const restoredRepositoryItem = popup.locator(`[data-repository="${repository}"]`);
-  const repositoryPresentation = await restoredRepositoryItem.locator('.repository-name').evaluate(element => ({
-    fullName: element.dataset.fullName,
-    title: element.getAttribute('title'),
-    ariaLabel: element.getAttribute('aria-label'),
-    describedBy: element.getAttribute('aria-describedby'),
-    textOverflow: getComputedStyle(element.querySelector('code')).textOverflow,
-    whiteSpace: getComputedStyle(element.querySelector('code')).whiteSpace,
-  }));
-  assert(repositoryPresentation.fullName === repository, 'Repository full value is not attached to the name surface.');
-  assert(repositoryPresentation.title === null, 'Repository name must not use the delayed native title tooltip.');
-  assert(
-    repositoryPresentation.ariaLabel === 'Full repository name: ' + repository,
-    'Repository name does not expose an accessible full value.',
-  );
-  assert(repositoryPresentation.describedBy === 'repository-tooltip', 'Repository name is not connected to its tooltip.');
-  assert(repositoryPresentation.textOverflow === 'ellipsis', 'Repository names must remain truncated with an ellipsis.');
-  assert(repositoryPresentation.whiteSpace === 'nowrap', 'Repository names must stay on one line before inspection.');
-  const repositoryName = restoredRepositoryItem.locator('.repository-name');
-  await repositoryName.hover();
-  await waitFor('repository tooltip to appear', async () => {
-    return popup.locator('#repository-tooltip.is-visible').count();
-  });
-  assert(
-    (await popup.locator('#repository-tooltip').innerText()) === repository,
-    'Repository tooltip does not show the complete value.',
-  );
+    await popup.locator('#repository-input').fill(repository);
+    await popup.locator('.add-button').click();
+    await popup.locator(`[data-repository="${repository}"]`).waitFor({
+      state: 'attached',
+      timeout: TIMEOUT,
+    });
+    const restoredRepositoryItem = popup.locator(`[data-repository="${repository}"]`);
+    const repositoryPresentation = await restoredRepositoryItem.locator('.repository-name').evaluate(element => ({
+      fullName: element.dataset.fullName,
+      title: element.getAttribute('title'),
+      ariaLabel: element.getAttribute('aria-label'),
+      describedBy: element.getAttribute('aria-describedby'),
+      textOverflow: getComputedStyle(element.querySelector('code')).textOverflow,
+      whiteSpace: getComputedStyle(element.querySelector('code')).whiteSpace,
+    }));
+    assert(repositoryPresentation.fullName === repository, 'Repository full value is not attached to the name surface.');
+    assert(repositoryPresentation.title === null, 'Repository name must not use the delayed native title tooltip.');
+    assert(
+      repositoryPresentation.ariaLabel === 'Full repository name: ' + repository,
+      'Repository name does not expose an accessible full value.',
+    );
+    assert(repositoryPresentation.describedBy === 'repository-tooltip', 'Repository name is not connected to its tooltip.');
+    assert(repositoryPresentation.textOverflow === 'ellipsis', 'Repository names must remain truncated with an ellipsis.');
+    assert(repositoryPresentation.whiteSpace === 'nowrap', 'Repository names must stay on one line before inspection.');
+    const repositoryName = restoredRepositoryItem.locator('.repository-name');
+    await repositoryName.hover();
+    await waitFor('repository tooltip to appear', async () => {
+      return popup.locator('#repository-tooltip.is-visible').count();
+    });
+    assert(
+      (await popup.locator('#repository-tooltip').innerText()) === repository,
+      'Repository tooltip does not show the complete value.',
+    );
+  }
   await popup.close();
   return extensionId;
 }
@@ -274,6 +278,7 @@ async function inspect(page) {
     const root = document.documentElement;
     const frame = document.querySelector('#ghpreview-frame');
     const error = document.querySelector('#ghpreview-error');
+    const warning = document.querySelector('#ghpreview-warning');
     const viewRoot = document.querySelector('ul[aria-label="File view"]');
     const items = viewRoot
       ? Array.from(viewRoot.querySelectorAll('li[data-component="SegmentedControl.Button"]'))
@@ -290,11 +295,16 @@ async function inspect(page) {
       };
     });
     const state =
-      root.dataset.previewState || frame?.dataset.previewState || error?.dataset.previewState || null;
+      root.dataset.previewState ||
+      frame?.dataset.previewState ||
+      error?.dataset.previewState ||
+      warning?.dataset.previewState ||
+      null;
     const errorCode =
       root.dataset.previewErrorCode ||
       frame?.dataset.previewErrorCode ||
       error?.dataset.previewErrorCode ||
+      warning?.dataset.previewErrorCode ||
       null;
     return {
       state,
@@ -303,17 +313,21 @@ async function inspect(page) {
         root.dataset.previewRequestId ||
         frame?.dataset.previewRequestId ||
         error?.dataset.previewRequestId ||
+        warning?.dataset.previewRequestId ||
         null,
       sessionId:
         root.dataset.previewSessionId ||
         frame?.dataset.previewSessionId ||
         error?.dataset.previewSessionId ||
+        warning?.dataset.previewSessionId ||
         null,
       previewAvailable: Boolean(document.querySelector('[data-ghpreview-link]')),
       previewLinkCount: document.querySelectorAll('[data-ghpreview-link]').length,
       views,
       hasFrame: Boolean(frame),
       hasError: Boolean(error),
+      hasTrust: Boolean(document.querySelector('#ghpreview-trust')),
+      hasWarning: Boolean(warning),
     };
   });
 }
@@ -432,7 +446,7 @@ async function installDomTrace(page) {
         entries.length = 0;
         lastKey = null;
         lastFrameKey = null;
-        capture('baseline', {}, true);
+        capture('initial', {}, true);
       },
       stop() {
         if (raf !== null) {
@@ -743,7 +757,21 @@ async function waitForPreviewDisabled(page) {
     return ['disabled', 'idle'].includes(snapshot.state) &&
       !snapshot.previewAvailable &&
       !snapshot.hasFrame &&
-      !snapshot.hasError
+      !snapshot.hasError &&
+      !snapshot.hasWarning
+      ? snapshot
+      : false;
+  });
+}
+
+async function waitForTrustRequired(page) {
+  return waitFor('the inline repository trust state', async () => {
+    const snapshot = await inspect(page);
+    return snapshot.state === 'trust-required' &&
+      snapshot.errorCode === 'repository-not-allowed' &&
+      snapshot.hasTrust &&
+      !snapshot.hasFrame &&
+      snapshot.previewAvailable
       ? snapshot
       : false;
   });
@@ -752,7 +780,7 @@ async function waitForPreviewDisabled(page) {
 async function waitForTerminalState(page, expectedState = EXPECTED_STATE) {
   return waitFor('a stable terminal Preview state', async () => {
     const snapshot = await inspect(page);
-    if (!['ready', 'failed', 'disabled'].includes(snapshot.state)) {
+    if (!['ready', 'failed', 'disabled', 'trust-required'].includes(snapshot.state)) {
       return false;
     }
     if (expectedState && snapshot.state !== expectedState) {
@@ -801,7 +829,7 @@ function assertMetadata(snapshot) {
   if (snapshot.state === 'ready' || snapshot.hasFrame) {
     assert(snapshot.sessionId, 'Preview did not expose data-preview-session-id.');
   }
-  if (snapshot.state === 'failed') {
+  if (snapshot.state === 'failed' || snapshot.state === 'trust-required') {
     assert(snapshot.errorCode, 'Failed Preview did not expose data-preview-error-code.');
   }
 }
@@ -1184,6 +1212,85 @@ async function runDirectBlameContract(page) {
   };
 }
 
+async function runTrustFlow(context, page, extensionId) {
+  let snapshot = await waitForTrustRequired(page);
+  assert(snapshot.previewLinkCount === 1, 'The first trust state duplicated the Preview control.');
+
+  await page.locator('[data-ghpreview-trust="decline"]').click();
+  snapshot = await waitFor('declining trust to keep the trust state', async () => {
+    const current = await inspect(page);
+    return current.state === 'trust-required' && current.hasTrust && !current.hasFrame
+      ? current
+      : false;
+  });
+  const declinedPopup = await openSettingsPopup(context, extensionId);
+  assert(
+    (await declinedPopup.locator('#repository-list > li').count()) === 0,
+    'Declining repository trust must not change the allowlist.',
+  );
+  await declinedPopup.close();
+
+  await page.locator('[data-ghpreview-trust="approve"]').click();
+  snapshot = await waitForTerminalState(page, 'ready');
+  assert(snapshot.hasFrame, 'Explicit repository trust did not continue into Preview.');
+  assert(!snapshot.hasTrust, 'The trust surface remained after the repository was trusted.');
+
+  const trustedPopup = await openSettingsPopup(context, extensionId);
+  assert(
+    (await trustedPopup.locator('#repository-list > li').count()) === 1,
+    'The first trust action did not add exactly one repository entry.',
+  );
+  await trustedPopup.close();
+
+  // Selecting Preview again exercises the already-trusted path and duplicate prevention.
+  await clickView(page, 'Code');
+  await waitForNativeView(page, 'code');
+  await clickPreview(page);
+  snapshot = await waitForTerminalState(page, 'ready');
+  assert(snapshot.previewLinkCount === 1, 'Repeated Preview selection duplicated the control.');
+  assert(snapshot.hasFrame, 'An already trusted repository did not return to Preview.');
+
+  const removedPopup = await openSettingsPopup(context, extensionId);
+  await removedPopup.locator('[data-remove-repository]').click();
+  await waitFor('trusted repository removal', async () => {
+    return (await removedPopup.locator('#repository-list > li').count()) === 0;
+  });
+  await removedPopup.close();
+
+  snapshot = await waitForTrustRequired(page);
+  assert(snapshot.hasTrust, 'Removing trust did not return the current Preview to trust-required.');
+  await page.locator('[data-ghpreview-trust="approve"]').click();
+  snapshot = await waitForTerminalState(page, 'ready');
+
+  const restoredPopup = await openSettingsPopup(context, extensionId);
+  assert(
+    (await restoredPopup.locator('#repository-list > li').count()) === 1,
+    'Re-trusting a repository created an unexpected number of entries.',
+  );
+  await restoredPopup.close();
+
+  if (SECOND_TRUST_URL !== '') {
+    const second = new URL(SECOND_TRUST_URL);
+    if (second.origin !== 'https://github.com' || !/\/(?:blob|blame)\/.+\.(?:html?|xhtml)$/i.test(second.pathname)) {
+      throw new Error('GHPREVIEW_E2E_SECOND_URL must point to an HTML Blob or Blame page.');
+    }
+    await page.goto(previewUrl(second.href), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    snapshot = await waitForTrustRequired(page);
+    assert(snapshot.hasFrame === false, 'A different repository reused the previous Preview frame.');
+    await page.locator('[data-ghpreview-trust="decline"]').click();
+    snapshot = await waitForTrustRequired(page);
+    await page.goto(initialTestUrl(), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    snapshot = await waitForTerminalState(page, 'ready');
+    assert(snapshot.hasFrame, 'Returning to the trusted repository did not restore Preview.');
+  }
+
+  return {
+    firstState: 'trust-required',
+    finalState: snapshot.state,
+    secondRepositoryChecked: SECOND_TRUST_URL !== '',
+  };
+}
+
 const browserPath = findBrowserPath();
 const profile = mkdtempSync(join(tmpdir(), 'ghpreview-e2e-'));
 const launchOptions = {
@@ -1216,7 +1323,9 @@ try {
   page.on('pageerror', error => logs.push({ type: 'pageerror', text: error.message }));
 
   const worker = await findExtensionWorker(context);
-  const extensionId = await configureSettingsThroughPopup(context, worker);
+  const extensionId = await configureSettingsThroughPopup(context, worker, {
+    addRepository: !TRUST_FLOW,
+  });
   await page.goto(initialTestUrl(), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
   const disabled = await waitForPreviewDisabled(page);
@@ -1238,6 +1347,14 @@ try {
     assert(!missingFile.hasError, 'Preview error surface was injected into a missing GitHub file page.');
     console.log(JSON.stringify({ step: 'missing-file', ...missingFile }));
     console.log('E2E passed.');
+  } else if (TRUST_FLOW) {
+    await waitForPreviewControl(page);
+    const initialTrust = await waitForTrustRequired(page);
+    assertMetadata(initialTrust);
+    console.log(JSON.stringify({ step: 'trust-required', ...initialTrust }));
+    const trustFlow = await runTrustFlow(context, page, extensionId);
+    console.log(JSON.stringify({ step: 'trust-flow', ...trustFlow }));
+    console.log('E2E passed.');
   } else {
     await waitForPreviewControl(page);
 
@@ -1247,13 +1364,22 @@ try {
     assertMetadata(initial);
     console.log(JSON.stringify({ step: 'terminal', ...initial }));
     if (EXPECTED_STATE) {
-      assert(initial.state === EXPECTED_STATE, 'Expected state ' + EXPECTED_STATE + ', got ' + initial.state + '.');
+      assert(
+        initial.state === EXPECTED_STATE,
+        'Expected state ' + EXPECTED_STATE + ', got ' + initial.state + '.',
+      );
     }
     if (EXPECTED_ERROR_CODE) {
       assert(
         initial.errorCode === EXPECTED_ERROR_CODE,
         'Expected error code ' + EXPECTED_ERROR_CODE + ', got ' + initial.errorCode + '.',
       );
+    }
+    if (EXPECTED_ERROR_CODE === 'sandbox-runtime-error') {
+      assert(initial.state === 'ready', 'Runtime errors must preserve the ready Preview state.');
+      assert(initial.hasFrame, 'Runtime errors must preserve the rendered Preview frame.');
+      assert(!initial.hasError, 'Runtime errors must not replace the rendered document with an error surface.');
+      assert(initial.hasWarning, 'Runtime errors must expose the extension-owned warning surface.');
     }
 
     const startupTrace = await readDomTrace(page);

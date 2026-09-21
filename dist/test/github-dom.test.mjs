@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { loadScript } from './helpers/load.mjs';
 
 function loadGithubDom(document) {
-  const window = { GHPREVIEW: { inline: {} } };
+  const window = { GHPREVIEW: {} };
   loadScript('dom.js', { window, document });
   return window.GHPREVIEW.githubDom;
 }
@@ -37,18 +37,18 @@ test('does not classify a normal GitHub file page as missing', () => {
   assert.equal(githubDom.isMissingFilePage(), false);
 });
 
-test('keeps forms and popups disabled while allowing optional dialogs', () => {
+test('keeps form submission and popup creation disabled while allowing optional dialogs', () => {
   const githubDom = loadGithubDom({
     title: 'page-with-sections.html at main · github/docs · GitHub',
     querySelector: () => null,
   });
 
   assert.equal(
-    githubDom.sandboxPolicy({ forms: true, popups: true, modals: false }),
+    githubDom.sandboxPolicy({ modals: false }),
     'allow-scripts',
   );
   assert.equal(
-    githubDom.sandboxPolicy({ forms: true, popups: true, modals: true }),
+    githubDom.sandboxPolicy({ modals: true }),
     'allow-scripts allow-modals',
   );
 });
