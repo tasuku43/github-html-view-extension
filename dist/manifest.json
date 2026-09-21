@@ -22,9 +22,11 @@
     {
       "comment": "Do not intercept GitHub traffic or inject code into the page's MAIN world.",
       "matches": ["https://github.com/*"],
+      "css": ["bootstrap.css"],
       "js": [
         "src/lib/blob-url.js",
         "src/lib/view-transition.js",
+        "src/lib/view-coordinator.js",
         "src/lib/preview-session.js",
         "src/lib/settings.js",
         "src/lib/inline.js",

@@ -28,7 +28,6 @@
     ],
     // One item in the switch. Use an unselected item as the visual template.
     viewSwitchItem: 'li[data-component="SegmentedControl.Button"]',
-    viewSwitchSpare: 'li[data-component="SegmentedControl.Button"]:not([data-selected])',
     // File header toolbar. It defines the boundary for hiding file content and is the
     // fallback insertion point when the view switch is unavailable.
     toolbar: [
@@ -92,6 +91,10 @@
   const PREVIEW_TOP_GAP_PX = 32;
   let activeErrorCode = null;
 
+  function findViewSwitch() {
+    return findFirst(SELECTORS.viewSwitch);
+  }
+
   /**
    * Add Preview at the start of the Code / Blame switch.
    *
@@ -103,7 +106,7 @@
       return true;
     }
 
-    const viewSwitch = findFirst(SELECTORS.viewSwitch);
+    const viewSwitch = findViewSwitch();
     if (viewSwitch !== null) {
       return insertIntoViewSwitch(viewSwitch, handlers);
     }
@@ -126,9 +129,8 @@
    * Prefer an unselected item. Cloning the selected item would copy its active styling.
    */
   function insertIntoViewSwitch(viewSwitch, handlers) {
-    const spare =
-      viewSwitch.querySelector(SELECTORS.viewSwitchSpare) ||
-      viewSwitch.querySelector(SELECTORS.viewSwitchItem);
+    const items = Array.from(viewSwitch.querySelectorAll(SELECTORS.viewSwitchItem));
+    const spare = items.find(item => !isSelectedItem(item)) || items[0];
     if (spare === null) {
       warn('view-switch', 'The view switch has no items; falling back beside Raw');
       const anchorPoint = findFirst(SELECTORS.toolbar);
@@ -155,9 +157,14 @@
     }
 
     setLabel(clone, control, 'Preview');
+    if (typeof handlers.href === 'string' && control.matches('a')) {
+      control.href = handlers.href;
+    }
     control.addEventListener('click', event => {
-      event.preventDefault();
-      handlers.onPreview();
+      const allowDefault = handlers.onPreview(event) === true;
+      if (!allowDefault) {
+        event.preventDefault();
+      }
     });
 
     clone.setAttribute(LINK_MARK, '');
@@ -182,63 +189,98 @@
     holder.setAttribute('data-text', label);
   }
 
+  function itemControl(item) {
+    return item.matches('a, button') ? item : item.querySelector('a, button');
+  }
+
+  function isSelectedItem(item) {
+    const control = itemControl(item);
+    return (
+      item.hasAttribute('data-selected') ||
+      item.getAttribute('aria-selected') === 'true' ||
+      (control !== null && control.getAttribute('aria-pressed') === 'true')
+    );
+  }
+
   /**
    * Reflect the current selection in the view switch.
    *
    * Preview is a peer option; omitting this would make it look unselected after a click.
    */
-  function markPreviewSelected(isPreview) {
+  function markPreviewSelected(isPreview, preferredNativeLabel = null) {
     const ours = document.querySelector(LINK_SELECTOR);
     if (ours === null || !ours.matches(SELECTORS.viewSwitchItem)) {
       return;
     }
     const viewSwitch = ours.parentElement;
-    // GitHub may have inserted the new view with its native selection before the
-    // controller runs. Capture that selection before changing any item; otherwise the
-    // first reconciliation records the marker but leaves every item visually unselected.
-    const nativeSelected = new Set(
-      Array.from(viewSwitch.children).filter(
-        item =>
-          item.hasAttribute('data-selected') ||
-          item.getAttribute('aria-selected') === 'true' ||
-          item.querySelector('a, button')?.getAttribute('aria-pressed') === 'true',
-      ),
+    const nativeItems = Array.from(viewSwitch.children).filter(
+      item => !item.hasAttribute(LINK_MARK),
     );
-    nativeSelected.forEach(item => {
-      if (!item.hasAttribute(LINK_MARK)) {
-        item.setAttribute(ORIGINAL_MARK, '');
-      }
-    });
-    Array.from(viewSwitch.children).forEach(item => {
-      const selected =
-        item === ours ? isPreview : !isPreview && (wasSelected(item) || nativeSelected.has(item));
-      setSelected(item, selected);
-    });
-  }
+    const nativeSelected = nativeItems.find(isSelectedItem);
 
-  /*
-   * Remember the originally selected item. It must be restored when leaving Preview, so
-   * the original selection cannot be lost.
-   */
-  const ORIGINAL_MARK = 'data-ghpreview-was-selected';
+    if (isPreview) {
+      nativeItems.forEach(item => setSelected(item, false));
+      setSelected(ours, true);
+      return;
+    }
 
-  function wasSelected(item) {
-    return item.hasAttribute(ORIGINAL_MARK);
+    // When leaving Preview, GitHub is the source of truth. If its click handler has not
+    // committed the selection yet, use the route-derived destination as a one-item
+    // fallback. Never restore a selection remembered from an earlier route: on Blame that
+    // would briefly select both Code and Blame while the SPA replaces the file view.
+    const preferred =
+      typeof preferredNativeLabel === 'string'
+        ? nativeItems.find(item => itemLabel(item) === preferredNativeLabel)
+        : undefined;
+    const selected = preferred || nativeSelected;
+    if (selected !== undefined) {
+      nativeItems.forEach(item => setSelected(item, item === selected));
+    }
+    setSelected(ours, false);
   }
 
   function setSelected(item, selected) {
-    if (item.hasAttribute('data-selected') && !item.hasAttribute(LINK_MARK)) {
-      item.setAttribute(ORIGINAL_MARK, '');
-    }
     if (selected) {
       item.setAttribute('data-selected', '');
     } else {
       item.removeAttribute('data-selected');
     }
     const control = item.querySelector('a, button');
+    if (item.hasAttribute('aria-selected')) {
+      item.setAttribute('aria-selected', selected ? 'true' : 'false');
+    }
     if (control !== null && control.hasAttribute('aria-pressed')) {
       control.setAttribute('aria-pressed', selected ? 'true' : 'false');
     }
+  }
+
+  function itemLabel(item) {
+    const control = itemControl(item);
+    return (control || item).textContent.trim().toLowerCase();
+  }
+
+  /**
+   * Read only GitHub-owned selection state, excluding the extension's Preview item.
+   * During a SPA route change this is the signal used by preview.js to decide whether
+   * the host switch has settled enough for one final reconciliation.
+   */
+  function viewSwitchState() {
+    const viewSwitch = findViewSwitch();
+    if (viewSwitch === null) {
+      return { ready: false, selected: null, signature: 'missing', root: null };
+    }
+    const nativeItems = Array.from(viewSwitch.querySelectorAll(SELECTORS.viewSwitchItem)).filter(
+      item => !item.hasAttribute(LINK_MARK),
+    );
+    const labels = nativeItems.map(itemLabel);
+    const selected = nativeItems.find(isSelectedItem);
+    const selectedLabel = selected ? itemLabel(selected) : null;
+    return {
+      ready: labels.includes('code') && labels.includes('blame'),
+      selected: selectedLabel,
+      signature: labels.join('|') + '::' + (selectedLabel || ''),
+      root: viewSwitch,
+    };
   }
 
   /**
@@ -276,11 +318,13 @@
     const link = document.createElement('a');
     link.setAttribute(LINK_MARK, '');
     link.className = 'ghpreview-link';
-    link.href = '#';
+    link.href = typeof handlers.href === 'string' ? handlers.href : '#';
     link.textContent = 'Preview';
     link.addEventListener('click', event => {
-      event.preventDefault();
-      handlers.onPreview();
+      const allowDefault = handlers.onPreview(event) === true;
+      if (!allowDefault) {
+        event.preventDefault();
+      }
     });
 
     const holder = anchorPoint.closest('div') || anchorPoint.parentElement;
@@ -985,6 +1029,7 @@
     insertPreviewLink,
     removePreviewLink,
     markPreviewSelected,
+    viewSwitchState,
     onLeavePreview,
     ensureStyle,
     mountFrame,

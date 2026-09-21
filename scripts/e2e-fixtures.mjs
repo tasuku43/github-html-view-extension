@@ -37,6 +37,21 @@ if (!rootUrl.pathname.endsWith('/')) {
 const cases = [
   { name: 'valid', path: 'docs/sample/index.html', state: 'ready' },
   {
+    name: 'direct-code-start',
+    path: 'docs/sample/index.html',
+    state: 'idle',
+    preserveTargetView: true,
+    initialView: 'code',
+  },
+  {
+    name: 'direct-blame-start',
+    path: 'docs/sample/index.html',
+    view: 'blame',
+    state: 'idle',
+    preserveTargetView: true,
+    initialView: 'blame',
+  },
+  {
     name: 'relative-resource',
     path: 'docs/sample/invalid/relative-resource.html',
     state: 'failed',
@@ -69,14 +84,22 @@ const cases = [
 ];
 
 function runCase(candidate) {
-  const targetUrl = new URL(candidate.path, rootUrl).href;
+  const target = new URL(candidate.path, rootUrl);
+  if (candidate.view) {
+    target.pathname = target.pathname.replace('/blob/', '/' + candidate.view + '/');
+  }
+  if (candidate.preserveTargetView) {
+    target.searchParams.set('plain', '1');
+  }
   const environment = {
     ...process.env,
-    GHPREVIEW_E2E_URL: targetUrl,
+    GHPREVIEW_E2E_URL: target.href,
     GHPREVIEW_E2E_EXPECT_STATE: candidate.state || '',
     GHPREVIEW_E2E_EXPECT_ERROR_CODE: candidate.errorCode || '',
     GHPREVIEW_E2E_EXPECT_NO_PREVIEW: candidate.noPreview ? '1' : '0',
     GHPREVIEW_E2E_ENABLE_JAVASCRIPT: candidate.enableJavaScript ? '1' : '0',
+    GHPREVIEW_E2E_PRESERVE_TARGET_VIEW: candidate.preserveTargetView ? '1' : '0',
+    GHPREVIEW_E2E_EXPECT_INITIAL_VIEW: candidate.initialView || '',
   };
 
   return new Promise((resolve, reject) => {

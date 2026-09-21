@@ -55,6 +55,13 @@ The same `data-preview-*` attributes are copied to `#ghpreview-frame` or
 
 `Recheck` clears the in-memory response cache and starts a fresh Worker request.
 
+Browser E2E uses the `[html-preview]` console stream as its primary evidence. It follows the
+transition facts (`native-navigation-started`, `view-transition-host-settled`,
+`preview-transition-committed`, and `view-selection-applied`) instead of treating a post-load
+selected-tab class or a screenshot as a contract. A lightweight animation-frame trace is used
+only for the narrow no-intermediate-tab assertion; the extension keeps one GitHub-owned view
+switch and does not paint a cloned overlay during navigation.
+
 ## Security notes
 
 Adding a repository allows JavaScript from its HTML files to run when previewed. The code

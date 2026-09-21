@@ -5,8 +5,11 @@
  *
  * The URL is supplied at runtime so repository or account information never becomes
  * part of the test source. The browser context is isolated and is discarded after each
- * run. The test intentionally observes the page through data-preview-* attributes rather
- * than depending on the appearance of the error card.
+ * run. The test uses the extension's structured [html-preview] diagnostics as the primary
+ * oracle. data-preview-* attributes and destination URLs verify the resulting contract; a
+ * lightweight animation-frame trace is used only to detect a visibly committed intermediate
+ * tab during a transition. Screenshots and post-load tab classes are not used as proof of
+ * success.
  */
 import { chromium } from 'playwright';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
@@ -24,6 +27,13 @@ const ENABLE_JAVASCRIPT = process.env.GHPREVIEW_E2E_ENABLE_JAVASCRIPT === '1';
 const RUN_NAVIGATION = process.env.GHPREVIEW_E2E_NAVIGATION !== '0';
 const HEADLESS = process.env.GHPREVIEW_E2E_HEADLESS === '1';
 const DEBUG = process.env.GHPREVIEW_E2E_DEBUG === '1';
+const TRACE_TRANSITIONS = process.env.GHPREVIEW_E2E_TRACE_TRANSITIONS === '1';
+const TRACE_STARTUP = process.env.GHPREVIEW_E2E_TRACE_STARTUP === '1';
+const PRESERVE_TARGET_VIEW = process.env.GHPREVIEW_E2E_PRESERVE_TARGET_VIEW === '1';
+const EXPECTED_INITIAL_VIEW = (
+  process.env.GHPREVIEW_E2E_EXPECT_INITIAL_VIEW ||
+  (PRESERVE_TARGET_VIEW ? 'code' : 'preview')
+).toLowerCase();
 const TIMEOUT = Number(process.env.GHPREVIEW_E2E_TIMEOUT || 30000);
 
 if (!TARGET_URL) {
@@ -44,6 +54,16 @@ if (fileMatch === null || !/\.(?:html?|xhtml)$/i.test(fileMatch[4])) {
 
 const repository = fileMatch[1] + '/' + fileMatch[2];
 
+if (!['preview', 'code', 'blame'].includes(EXPECTED_INITIAL_VIEW)) {
+  throw new Error('GHPREVIEW_E2E_EXPECT_INITIAL_VIEW must be preview, code, or blame.');
+}
+if (PRESERVE_TARGET_VIEW && EXPECTED_INITIAL_VIEW === 'code' && target.searchParams.get('plain') !== '1') {
+  throw new Error('A direct Code start requires a ?plain=1 source-view URL.');
+}
+if (PRESERVE_TARGET_VIEW && EXPECTED_INITIAL_VIEW === 'blame' && fileMatch[3] !== 'blame') {
+  throw new Error('A direct Blame start requires a /blame/ URL.');
+}
+
 function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
@@ -54,6 +74,10 @@ function previewUrl(href) {
   url.searchParams.delete('plain');
   url.hash = '';
   return url.href;
+}
+
+function initialTestUrl() {
+  return PRESERVE_TARGET_VIEW ? TARGET_URL : previewUrl(TARGET_URL);
 }
 
 function findBrowserPath() {
@@ -250,9 +274,10 @@ async function inspect(page) {
     const root = document.documentElement;
     const frame = document.querySelector('#ghpreview-frame');
     const error = document.querySelector('#ghpreview-error');
-    const items = Array.from(
-      document.querySelectorAll('li[data-component="SegmentedControl.Button"]'),
-    );
+    const viewRoot = document.querySelector('ul[aria-label="File view"]');
+    const items = viewRoot
+      ? Array.from(viewRoot.querySelectorAll('li[data-component="SegmentedControl.Button"]'))
+      : [];
     const views = items.map(item => {
       const control = item.matches('a, button') ? item : item.querySelector('a, button');
       const label = (control || item).textContent.trim();
@@ -291,6 +316,384 @@ async function inspect(page) {
       hasError: Boolean(error),
     };
   });
+}
+
+/**
+ * Record the native file-view state from document start.
+ *
+ * The extension and GitHub both mutate this control. A post-load snapshot can miss a
+ * transient selection, so this recorder starts before navigation and keeps only meaningful
+ * state changes. It is an E2E diagnostic oracle, not a product runtime dependency.
+ */
+async function installDomTrace(page) {
+  await page.addInitScript(() => {
+    const entries = [];
+    let lastKey = null;
+    let lastFrameKey = null;
+    let observer = null;
+    let raf = null;
+
+    function readState() {
+      const viewRoot = document.querySelector('ul[aria-label="File view"]');
+      const items = viewRoot
+        ? Array.from(viewRoot.querySelectorAll('li[data-component="SegmentedControl.Button"]'))
+        : [];
+      return {
+        labels: items.map(item => (item.querySelector('a, button') || item).textContent.trim()),
+        selected: items
+          .filter(item => {
+            const control = item.matches('a, button') ? item : item.querySelector('a, button');
+            return (
+              item.hasAttribute('data-selected') ||
+              item.getAttribute('aria-selected') === 'true' ||
+              control?.getAttribute('aria-pressed') === 'true'
+            );
+          })
+          .map(item => (item.querySelector('a, button') || item).textContent.trim()),
+        previewLinkCount: document.querySelectorAll('[data-ghpreview-link]').length,
+        viewRootPresent: viewRoot !== null,
+        visibility: viewRoot ? getComputedStyle(viewRoot).visibility : null,
+        display: viewRoot ? getComputedStyle(viewRoot).display : null,
+        opacity: viewRoot ? getComputedStyle(viewRoot).opacity : null,
+      };
+    }
+
+    function capture(source, detail = {}, force = false) {
+      const state = readState();
+      const key = JSON.stringify(state);
+      if (source === 'raf') {
+        if (key === lastFrameKey) {
+          return;
+        }
+        lastFrameKey = key;
+      } else if (!force && key === lastKey) {
+        return;
+      }
+      lastKey = key;
+      entries.push({ source, at: performance.now(), state, detail });
+      if (entries.length > 4000) {
+        entries.shift();
+      }
+    }
+
+    function install() {
+      if (observer !== null || document.documentElement === null) {
+        return;
+      }
+      observer = new MutationObserver(() => capture('mutation'));
+      observer.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-selected', 'aria-selected', 'aria-pressed', 'aria-current'],
+      });
+      document.addEventListener(
+        'click',
+        event => {
+          const target = event.target instanceof Element ? event.target : null;
+          const item = target?.closest('li[data-component="SegmentedControl.Button"]');
+          if (item !== null) {
+            capture(
+              'click',
+              { label: (item.querySelector('a, button') || item).textContent.trim() },
+              true,
+            );
+          }
+        },
+        true,
+      );
+
+      const pushState = history.pushState;
+      history.pushState = function (...args) {
+        capture('pushState:before', { hasDestination: typeof args[2] === 'string' }, true);
+        const result = pushState.apply(this, args);
+        capture('pushState:after', undefined, true);
+        return result;
+      };
+      const replaceState = history.replaceState;
+      history.replaceState = function (...args) {
+        capture('replaceState:before', { hasDestination: typeof args[2] === 'string' }, true);
+        const result = replaceState.apply(this, args);
+        capture('replaceState:after', undefined, true);
+        return result;
+      };
+      addEventListener('popstate', () => capture('popstate', {}, true));
+      capture('document-start', {}, true);
+      const frame = () => {
+        capture('raf');
+        raf = requestAnimationFrame(frame);
+      };
+      raf = requestAnimationFrame(frame);
+    }
+
+    window.__ghpreviewDomTrace = {
+      entries,
+      reset() {
+        entries.length = 0;
+        lastKey = null;
+        lastFrameKey = null;
+        capture('baseline', {}, true);
+      },
+      stop() {
+        if (raf !== null) {
+          cancelAnimationFrame(raf);
+          raf = null;
+        }
+        observer?.disconnect();
+        return entries;
+      },
+    };
+    if (document.documentElement !== null) {
+      install();
+    } else {
+      addEventListener('DOMContentLoaded', install, { once: true });
+    }
+  });
+}
+
+async function resetDomTrace(page) {
+  await page.evaluate(() => window.__ghpreviewDomTrace?.reset());
+}
+
+async function readDomTrace(page) {
+  return page.evaluate(() => window.__ghpreviewDomTrace?.entries || []);
+}
+
+function assertStartupPresentation(trace, expectedView, label) {
+  const expected = expectedView.toLowerCase();
+  let previewWasPresented = false;
+  const failures = [];
+  for (const entry of trace || []) {
+    const state = entry.state;
+    const labels = state.labels.map(value => value.toLowerCase());
+    if (state.previewLinkCount === 1 && labels.includes('preview')) {
+      previewWasPresented = true;
+    }
+    const visible =
+      state.visibility !== 'hidden' && state.display !== 'none' && state.opacity !== '0';
+    if (!previewWasPresented || entry.source !== 'raf' || !visible) {
+      continue;
+    }
+    if (state.selected.length !== 1 || state.selected[0].toLowerCase() !== expected) {
+      failures.push({
+        source: entry.source,
+        selected: state.selected,
+        labels: state.labels,
+        visibility: state.visibility,
+        display: state.display,
+        opacity: state.opacity,
+      });
+    }
+  }
+  assert(
+    failures.length === 0,
+    label + ' changed presentation after Preview became available: ' + JSON.stringify(failures),
+  );
+}
+
+function committedSelectionSequence(trace) {
+  const sequence = [];
+  trace.forEach(entry => {
+    const labels = entry.state.labels.map(label => label.toLowerCase());
+    const selected = entry.state.selected.map(label => label.toLowerCase());
+    if (!labels.includes('code') || !labels.includes('blame') || selected.length !== 1) {
+      return;
+    }
+    const label = selected[0];
+    if (sequence.at(-1) !== label) {
+      sequence.push(label);
+    }
+  });
+  return sequence;
+}
+
+function visibleFrameTrace(trace) {
+  return (trace || []).filter(entry => {
+    if (entry.source === 'before') {
+      return true;
+    }
+    if (entry.source !== 'raf') {
+      return false;
+    }
+    const state = entry.state;
+    return state.visibility !== 'hidden' && state.display !== 'none' && state.opacity !== '0';
+  });
+}
+
+function visibleFrameSelectionSequence(trace) {
+  return committedSelectionSequence(visibleFrameTrace(trace));
+}
+
+function assertSelectionSequence(trace, expected, label) {
+  const actual = committedSelectionSequence(trace);
+  assert(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    label +
+      ' changed selection as ' +
+      JSON.stringify(actual) +
+      '; expected ' +
+      JSON.stringify(expected) +
+      '. Trace: ' +
+      JSON.stringify(
+        trace.map(entry => ({
+          source: entry.source,
+          selected: entry.state.selected,
+          labels: entry.state.labels,
+        })),
+      ),
+  );
+}
+
+function visiblePresentationFacts(trace) {
+  return (trace || [])
+    .filter(entry => entry.source === 'raf')
+    .filter(entry => {
+      const state = entry.state;
+      return state.visibility !== 'hidden' && state.display !== 'none' && state.opacity !== '0';
+    })
+    .map(entry => ({
+      selected: entry.state.selected,
+      labels: entry.state.labels,
+      previewLinkCount: entry.state.previewLinkCount,
+      visibility: entry.state.visibility,
+      display: entry.state.display,
+      opacity: entry.state.opacity,
+    }));
+}
+
+function assertNoVisibleIntermediate(trace, label) {
+  const frames = visiblePresentationFacts(trace);
+  const invalidSelection = frames.filter(frame => {
+    const labels = frame.labels.map(value => value.toLowerCase());
+    return labels.includes('preview') && labels.includes('code') && labels.includes('blame') &&
+      frame.selected.length !== 1;
+  });
+  assert(
+    invalidSelection.length === 0,
+    label + ' exposed an invalid selected-tab state in a rendered frame: ' +
+      JSON.stringify(invalidSelection),
+  );
+
+  const missingPreview = frames.filter(frame => {
+    const labels = frame.labels.map(value => value.toLowerCase());
+    return labels.includes('code') && labels.includes('blame') && frame.previewLinkCount !== 1;
+  });
+  assert(
+    missingPreview.length === 0,
+    label + ' dropped the Preview control in a rendered frame: ' + JSON.stringify(missingPreview),
+  );
+}
+
+function assertSidebarContinuity(trace, label) {
+  const frames = (trace || []).filter(entry => entry.source === 'raf');
+  const missing = frames.filter(frame => {
+    const sidebar = frame.state.sidebar;
+    return sidebar === undefined ||
+      !sidebar.present ||
+      sidebar.visibility === 'hidden' ||
+      sidebar.display === 'none';
+  });
+  assert(
+    missing.length === 0,
+    label + ' hid or removed the repository file tree during the transition: ' +
+      JSON.stringify(missing),
+  );
+}
+
+async function startTransitionTrace(page) {
+  await page.evaluate(() => {
+    const trace = [];
+    let previousFrameKey = null;
+    const capture = source => {
+      const viewRoot = document.querySelector('ul[aria-label="File view"]');
+      const items = viewRoot
+        ? Array.from(viewRoot.querySelectorAll('li[data-component="SegmentedControl.Button"]'))
+        : [];
+      const selected = items
+        .filter(item => {
+          const control = item.matches('a, button') ? item : item.querySelector('a, button');
+          return (
+            item.hasAttribute('data-selected') ||
+            item.getAttribute('aria-selected') === 'true' ||
+            control?.getAttribute('aria-pressed') === 'true'
+          );
+        })
+        .map(item => (item.querySelector('a, button') || item).textContent.trim());
+      const state = {
+        selected,
+        labels: items.map(item => (item.querySelector('a, button') || item).textContent.trim()),
+        classes: items.map(item => ({
+          label: (item.querySelector('a, button') || item).textContent.trim(),
+          item: String(item.className || ''),
+          control: String((item.querySelector('a, button') || {}).className || ''),
+          focused: item.contains(document.activeElement),
+          active: item.matches(':active') || Boolean(item.querySelector('a, button')?.matches(':active')),
+        })),
+        visibility: viewRoot ? getComputedStyle(viewRoot).visibility : null,
+        display: viewRoot ? getComputedStyle(viewRoot).display : null,
+        opacity: viewRoot ? getComputedStyle(viewRoot).opacity : null,
+        previewLinkCount: document.querySelectorAll('[data-ghpreview-link]').length,
+        sidebar: (() => {
+          const files = document.querySelector('[aria-label="Files"]');
+          return {
+            present: files !== null,
+            visibility: files ? getComputedStyle(files).visibility : null,
+            display: files ? getComputedStyle(files).display : null,
+          };
+        })(),
+      };
+      const previous = trace[trace.length - 1];
+      const key = JSON.stringify(state);
+      if (source === 'raf') {
+        if (key === previousFrameKey) {
+          return;
+        }
+        previousFrameKey = key;
+      }
+      if (!previous || JSON.stringify(previous.state) !== JSON.stringify(state) || source === 'raf') {
+        trace.push({ source, at: performance.now(), state });
+      }
+    };
+    const observer = new MutationObserver(records => {
+      if (
+        records.some(
+          record =>
+            record.type === 'childList' ||
+            ['class', 'style', 'data-selected', 'aria-selected', 'aria-pressed'].includes(
+              record.attributeName,
+            ),
+        )
+      ) {
+        capture('mutation');
+      }
+    });
+    observer.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-selected', 'aria-selected', 'aria-pressed'],
+    });
+    const frame = () => {
+      capture('raf');
+      window.__ghpreviewTransitionTrace.raf = requestAnimationFrame(frame);
+    };
+    window.__ghpreviewTransitionTrace = { trace, observer, raf: requestAnimationFrame(frame) };
+    capture('before');
+  });
+}
+
+async function stopTransitionTrace(page) {
+  return page
+    .evaluate(() => {
+      const handle = window.__ghpreviewTransitionTrace;
+      if (!handle) {
+        return [];
+      }
+      cancelAnimationFrame(handle.raf);
+      handle.observer.disconnect();
+      return handle.trace;
+    })
+    .catch(() => null);
 }
 
 async function inspectFrameGeometry(page) {
@@ -375,15 +778,21 @@ function assert(condition, message) {
   }
 }
 
-function assertSelected(snapshot, label) {
-  const view = snapshot.views.find(candidate => candidate.label.toLowerCase() === label.toLowerCase());
-  assert(view && view.selected, label + ' is not selected: ' + JSON.stringify(snapshot.views));
-}
-
-function isSelected(snapshot, label) {
-  return snapshot.views.some(
-    candidate => candidate.label.toLowerCase() === label.toLowerCase() && candidate.selected,
-  );
+function diagnosticEventsSince(startIndex) {
+  return logs
+    .slice(startIndex)
+    .map(entry => {
+      const prefix = '[html-preview] ';
+      if (!entry.text.startsWith(prefix)) {
+        return null;
+      }
+      try {
+        return JSON.parse(entry.text.slice(prefix.length));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 }
 
 function assertMetadata(snapshot) {
@@ -395,6 +804,15 @@ function assertMetadata(snapshot) {
   if (snapshot.state === 'failed') {
     assert(snapshot.errorCode, 'Failed Preview did not expose data-preview-error-code.');
   }
+}
+
+function assertSelected(snapshot, label) {
+  const selected = snapshot.views.filter(view => view.selected).map(view => view.label);
+  assert(selected.length === 1, 'Expected exactly one selected file view, got ' + JSON.stringify(selected));
+  assert(
+    selected[0].toLowerCase() === label.toLowerCase(),
+    label + ' is not selected: ' + JSON.stringify(snapshot.views),
+  );
 }
 
 async function clickView(page, label) {
@@ -410,6 +828,180 @@ async function clickPreview(page) {
   await page.locator('[data-ghpreview-link]').first().click();
 }
 
+async function observeViewTransition(page, action, label, expectedView) {
+  const logStart = logs.length;
+  const before = await inspect(page);
+  const beforeSelected = before.views.filter(view => view.selected).map(view => view.label.toLowerCase());
+  await resetDomTrace(page);
+  await startTransitionTrace(page);
+  let actionError = null;
+  let complete = false;
+  const actionPromise = Promise.resolve()
+    .then(action)
+    .catch(error => {
+      actionError = error;
+    })
+    .finally(() => {
+      complete = true;
+    });
+  const deadline = Date.now() + 2000;
+  while (!complete && Date.now() < deadline) {
+    if (TRACE_TRANSITIONS) {
+      await inspect(page).catch(() => null);
+    }
+    await page.waitForTimeout(16);
+  }
+  await actionPromise;
+  assert(actionError === null, label + ' interaction failed: ' + actionError);
+
+  const nativeView = expectedView === 'preview' ? 'code' : expectedView;
+  const facts = await waitFor(label + ' lifecycle diagnostics', async () => {
+    const diagnostics = diagnosticEventsSince(logStart);
+    const navigationIndex = diagnostics.findIndex(
+      event =>
+        event.event === 'native-navigation-started' &&
+        event.detail &&
+        event.detail.target === expectedView,
+    );
+    const previewCommitIndex = diagnostics.findIndex(
+      (event, index) =>
+        index >= Math.max(navigationIndex, -1) &&
+        expectedView === 'preview' &&
+        event.event === 'preview-transition-committed',
+    );
+    const settledIndex = diagnostics.findIndex(
+      (event, index) =>
+        index >= Math.max(navigationIndex, -1) &&
+        event.event === 'view-transition-host-settled' &&
+        event.detail &&
+        event.detail.expected === nativeView &&
+        event.detail.selected === nativeView,
+    );
+    const appliedIndex = diagnostics.findIndex(
+      (event, index) =>
+        index >= Math.max(navigationIndex, -1) &&
+        event.event === 'view-selection-applied' &&
+        event.detail &&
+        event.detail.selectedView === expectedView,
+    );
+
+    if (appliedIndex < 0) {
+      return false;
+    }
+    if (
+      expectedView !== 'code' &&
+      (navigationIndex < 0 ||
+        (expectedView === 'preview'
+          ? previewCommitIndex < navigationIndex
+          : settledIndex < navigationIndex))
+    ) {
+      return false;
+    }
+    return {
+      navigationIndex,
+      settledIndex: expectedView === 'preview' ? previewCommitIndex : settledIndex,
+      appliedIndex,
+    };
+  });
+
+  await waitFor(label + ' visible settled presentation', async () => {
+    return page.evaluate(expected => {
+      const root = document.querySelector('ul[aria-label="File view"]');
+      if (root === null) {
+        return false;
+      }
+      const style = getComputedStyle(root);
+      if (style.visibility === 'hidden' || style.display === 'none' || style.opacity === '0') {
+        return false;
+      }
+      const items = Array.from(root.querySelectorAll('li[data-component="SegmentedControl.Button"]'));
+      const selected = items
+        .filter(item => {
+          const control = item.matches('a, button') ? item : item.querySelector('a, button');
+          return (
+            item.hasAttribute('data-selected') ||
+            item.getAttribute('aria-selected') === 'true' ||
+            control?.getAttribute('aria-pressed') === 'true'
+          );
+        })
+        .map(item => (item.querySelector('a, button') || item).textContent.trim().toLowerCase());
+      return selected.length === 1 && selected[0] === expected &&
+        document.querySelectorAll('[data-ghpreview-link]').length === 1;
+    }, expectedView);
+  });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve(true))));
+
+  const trace = await stopTransitionTrace(page);
+  const domTrace = await readDomTrace(page);
+  const mutationSelectionSequence = committedSelectionSequence(domTrace);
+  const frameSelectionSequence = trace === null ? [] : visibleFrameSelectionSequence(trace);
+  const selectionSequence = frameSelectionSequence.length > 0
+    ? frameSelectionSequence
+    : mutationSelectionSequence;
+  if (trace !== null) {
+    assertNoVisibleIntermediate(trace, label);
+  }
+  if (label.endsWith('Blame -> Code')) {
+    assert(
+      trace !== null && trace.length > 0,
+      label + ' caused a full document navigation instead of preserving the GitHub SPA shell.',
+    );
+    assertSidebarContinuity(trace, label);
+  }
+  if (beforeSelected.length === 1) {
+    const documentNavigationToCode =
+      beforeSelected[0] === 'blame' &&
+      expectedView === 'code' &&
+      JSON.stringify(mutationSelectionSequence) === JSON.stringify(['code']) &&
+      frameSelectionSequence.length === 0;
+    if (!documentNavigationToCode) {
+      try {
+        assertSelectionSequence(
+          frameSelectionSequence.length > 0 ? visibleFrameTrace(trace) : domTrace,
+          [beforeSelected[0], expectedView],
+          label,
+        );
+      } catch (error) {
+        if (trace !== null) {
+          error.message +=
+            ' Visible trace: ' +
+            JSON.stringify(
+              trace.map(entry => ({
+                source: entry.source,
+                selected: entry.state.selected,
+                labels: entry.state.labels,
+                visibility: entry.state.visibility,
+                display: entry.state.display,
+              })),
+            );
+        }
+        throw error;
+      }
+    }
+  }
+  const diagnostics = diagnosticEventsSince(logStart);
+  const eventNames = diagnostics.map(event => event.event);
+  return {
+    label,
+    oracle: 'structured-diagnostics',
+    facts,
+    events: eventNames,
+    selectionSequence,
+    mutationSelectionSequence,
+    selectionObservation:
+      beforeSelected.length === 1 &&
+      beforeSelected[0] === 'blame' &&
+      expectedView === 'code' &&
+      JSON.stringify(mutationSelectionSequence) === JSON.stringify(['code']) &&
+      frameSelectionSequence.length === 0
+        ? 'new-document-destination-only'
+        : frameSelectionSequence.length > 0
+          ? 'animation-frame'
+          : 'mutation-only',
+    ...(TRACE_TRANSITIONS && trace !== null ? { trace } : {}),
+  };
+}
+
 async function waitForView(page, predicate, label) {
   return waitFor(label, async () => {
     const snapshot = await inspect(page);
@@ -420,65 +1012,176 @@ async function waitForView(page, predicate, label) {
 async function runNavigationContract(page) {
   await waitForPreviewControl(page);
   let snapshot = await inspect(page);
-  assertSelected(snapshot, 'Preview');
   assert(snapshot.previewAvailable, 'Preview control is missing before navigation.');
   assert(snapshot.previewLinkCount === 1, 'Preview control is duplicated before navigation.');
 
-  await clickView(page, 'Code');
+  const previewToCode = await observeViewTransition(
+    page,
+    () => clickView(page, 'Code'),
+    'Preview -> Code',
+    'code',
+  );
   snapshot = await waitForView(
     page,
     current =>
       new URL(page.url()).searchParams.get('plain') === '1' &&
-      current.previewAvailable &&
-      isSelected(current, 'Code'),
+      current.previewAvailable,
     'Preview -> Code',
   );
-  assertSelected(snapshot, 'Code');
   assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Preview -> Code.');
+  assertSelected(snapshot, 'Code');
 
-  await clickView(page, 'Blame');
+  const codeToBlame = await observeViewTransition(
+    page,
+    () => clickView(page, 'Blame'),
+    'Code -> Blame',
+    'blame',
+  );
   snapshot = await waitForView(
     page,
-    current => page.url().includes('/blame/') && current.previewAvailable && isSelected(current, 'Blame'),
+    current => page.url().includes('/blame/') && current.previewAvailable,
     'Code -> Blame',
   );
-  assertSelected(snapshot, 'Blame');
   assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Code -> Blame.');
+  assertSelected(snapshot, 'Blame');
 
-  await clickPreview(page);
+  const blameToPreview = await observeViewTransition(
+    page,
+    () => clickPreview(page),
+    'Blame -> Preview',
+    'preview',
+  );
   snapshot = await waitForView(
     page,
     current =>
       page.url().includes('/blob/') &&
       !new URL(page.url()).searchParams.has('plain') &&
-      current.previewAvailable &&
-      isSelected(current, 'Preview'),
+      current.previewAvailable,
     'Blame -> Preview',
   );
-  assertSelected(snapshot, 'Preview');
   assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Blame -> Preview.');
+  assertSelected(snapshot, 'Preview');
 
-  await clickView(page, 'Blame');
+  const previewToBlame = await observeViewTransition(
+    page,
+    () => clickView(page, 'Blame'),
+    'Preview -> Blame',
+    'blame',
+  );
   snapshot = await waitForView(
     page,
-    current => page.url().includes('/blame/') && current.previewAvailable && isSelected(current, 'Blame'),
+    current => page.url().includes('/blame/') && current.previewAvailable,
     'Preview -> Blame',
   );
-  assertSelected(snapshot, 'Blame');
   assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Preview -> Blame.');
+  assertSelected(snapshot, 'Blame');
 
-  await clickView(page, 'Code');
+  const blameToCode = await observeViewTransition(
+    page,
+    () => clickView(page, 'Code'),
+    'Blame -> Code',
+    'code',
+  );
   snapshot = await waitForView(
     page,
     current =>
       page.url().includes('/blob/') &&
       new URL(page.url()).searchParams.get('plain') === '1' &&
-      current.previewAvailable &&
-      isSelected(current, 'Code'),
+      current.previewAvailable,
     'Blame -> Code',
   );
-  assertSelected(snapshot, 'Code');
   assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after Blame -> Code.');
+  assertSelected(snapshot, 'Code');
+
+  return { previewToCode, codeToBlame, blameToPreview, previewToBlame, blameToCode };
+}
+
+async function waitForNativeView(page, expectedView) {
+  return waitFor('a stable direct ' + expectedView + ' view', async () => {
+    const snapshot = await inspect(page);
+    const isSourceUrl = new URL(page.url()).searchParams.get('plain') === '1';
+    const routeMatches = expectedView === 'blame'
+      ? page.url().includes('/blame/')
+      : isSourceUrl;
+    if (!routeMatches || snapshot.state !== 'idle' || !snapshot.previewAvailable) {
+      return false;
+    }
+    const selected = snapshot.views.filter(view => view.selected).map(view => view.label.toLowerCase());
+    if (selected.length !== 1 || selected[0] !== expectedView) {
+      return false;
+    }
+    await page.waitForTimeout(1000);
+    const stable = await inspect(page);
+    const stableSelected = stable.views.filter(view => view.selected).map(view => view.label.toLowerCase());
+    return stable.state === 'idle' &&
+      stable.previewAvailable &&
+      stableSelected.length === 1 &&
+      stableSelected[0] === expectedView
+      ? stable
+      : false;
+  });
+}
+
+async function runDirectSourceContract(page) {
+  const initialTrace = await readDomTrace(page);
+  assertSelectionSequence(initialTrace, ['code'], 'Direct ?plain=1 startup');
+
+  await resetDomTrace(page);
+  const codeToBlame = await observeViewTransition(
+    page,
+    () => clickView(page, 'Blame'),
+    'Direct Code -> Blame',
+    'blame',
+  );
+  const snapshot = await waitForView(
+    page,
+    current => page.url().includes('/blame/') && current.previewAvailable,
+    'Direct Code -> Blame',
+  );
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after direct Code -> Blame.');
+  assertSelected(snapshot, 'Blame');
+  assertSelectionSequence(
+    await readDomTrace(page),
+    ['code', 'blame'],
+    'Direct Code -> Blame',
+  );
+
+  return {
+    codeToBlame,
+    startupSelectionSequence: committedSelectionSequence(initialTrace),
+  };
+}
+
+async function runDirectBlameContract(page) {
+  const initialTrace = await readDomTrace(page);
+  assertSelectionSequence(initialTrace, ['blame'], 'Direct Blame startup');
+
+  const blameToCode = await observeViewTransition(
+    page,
+    () => clickView(page, 'Code'),
+    'Direct Blame -> Code',
+    'code',
+  );
+  const snapshot = await waitForView(
+    page,
+    current =>
+      page.url().includes('/blob/') &&
+      new URL(page.url()).searchParams.get('plain') === '1' &&
+      current.previewAvailable,
+    'Direct Blame -> Code',
+  );
+  assert(snapshot.previewLinkCount === 1, 'Preview control was duplicated after direct Blame -> Code.');
+  assertSelected(snapshot, 'Code');
+  assertSelectionSequence(
+    await readDomTrace(page),
+    ['blame', 'code'],
+    'Direct Blame -> Code',
+  );
+
+  return {
+    blameToCode,
+    startupSelectionSequence: committedSelectionSequence(initialTrace),
+  };
 }
 
 const browserPath = findBrowserPath();
@@ -500,6 +1203,7 @@ const logs = [];
 try {
   context = await chromium.launchPersistentContext(profile, launchOptions);
   page = context.pages()[0] || (await context.newPage());
+  await installDomTrace(page);
   page.on('console', message => {
     const text = message.text();
     if (text.startsWith('[html-preview]')) {
@@ -513,13 +1217,13 @@ try {
 
   const worker = await findExtensionWorker(context);
   const extensionId = await configureSettingsThroughPopup(context, worker);
-  await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+  await page.goto(initialTestUrl(), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
   const disabled = await waitForPreviewDisabled(page);
   console.log(JSON.stringify({ step: 'master-switch-off', ...disabled }));
 
   await setPreviewEnabledThroughPopup(context, extensionId, true);
-  await page.goto(previewUrl(TARGET_URL), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+  await page.goto(initialTestUrl(), { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
 
   if (EXPECT_NO_PREVIEW) {
     await page.locator('[data-testid="error-404-description"]').waitFor({
@@ -537,7 +1241,9 @@ try {
   } else {
     await waitForPreviewControl(page);
 
-    const initial = await waitForTerminalState(page);
+    const initial = EXPECTED_INITIAL_VIEW === 'preview'
+      ? await waitForTerminalState(page)
+      : await waitForNativeView(page, EXPECTED_INITIAL_VIEW);
     assertMetadata(initial);
     console.log(JSON.stringify({ step: 'terminal', ...initial }));
     if (EXPECTED_STATE) {
@@ -549,6 +1255,27 @@ try {
         'Expected error code ' + EXPECTED_ERROR_CODE + ', got ' + initial.errorCode + '.',
       );
     }
+
+    const startupTrace = await readDomTrace(page);
+    if (TRACE_STARTUP) {
+      console.log(JSON.stringify({
+        step: 'startup-trace',
+        entries: startupTrace.map(entry => ({
+          source: entry.source,
+          selected: entry.state.selected,
+          labels: entry.state.labels,
+          previewLinkCount: entry.state.previewLinkCount,
+          visibility: entry.state.visibility,
+          display: entry.state.display,
+          opacity: entry.state.opacity,
+        })),
+      }));
+    }
+    assertStartupPresentation(
+      startupTrace,
+      EXPECTED_INITIAL_VIEW,
+      EXPECTED_INITIAL_VIEW === 'preview' ? 'Preview startup' : 'Direct ' + EXPECTED_INITIAL_VIEW + ' startup',
+    );
 
     if (initial.state === 'ready') {
       const geometry = await waitFor('Preview frame geometry', async () => {
@@ -563,7 +1290,12 @@ try {
     }
 
     if (RUN_NAVIGATION) {
-      await runNavigationContract(page);
+      const navigation = EXPECTED_INITIAL_VIEW === 'code'
+        ? await runDirectSourceContract(page)
+        : EXPECTED_INITIAL_VIEW === 'blame'
+          ? await runDirectBlameContract(page)
+          : await runNavigationContract(page);
+      console.log(JSON.stringify({ step: 'navigation-transition', ...navigation }));
     }
 
     console.log('E2E passed.');

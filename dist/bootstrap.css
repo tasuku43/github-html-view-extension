@@ -1,0 +1,9 @@
+/*
+ * The content script sets this marker synchronously for supported HTML routes. Keep the
+ * native file-view control from painting its temporary Code state before Preview can be
+ * projected into the same control. The marker is removed as soon as the extension has a
+ * settled presentation, or immediately when the page is outside the Preview contract.
+ */
+html[data-ghpreview-bootstrap="pending"] ul[aria-label="File view"] {
+  visibility: hidden !important;
+}

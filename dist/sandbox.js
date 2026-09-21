@@ -22,6 +22,34 @@
     window.parent.postMessage({ type, sessionId, ...(detail || {}) }, 'https://github.com');
   }
 
+  let runtimeErrorReported = false;
+
+  function reportRuntimeError() {
+    if (runtimeErrorReported) {
+      return;
+    }
+    runtimeErrorReported = true;
+    console.error(
+      '[html-preview] ' +
+        JSON.stringify({
+          event: 'runtime-error',
+          phase: 'sandbox',
+          sessionId,
+          errorCode: 'sandbox-runtime-error',
+          detail: { source: 'rendered-document' },
+        }),
+    );
+    post(RUNTIME_ERROR, { errorCode: 'sandbox-runtime-error' });
+  }
+
+  window.addEventListener('error', event => {
+    if (event && event.target && event.target !== window) {
+      return;
+    }
+    reportRuntimeError();
+  });
+  window.addEventListener('unhandledrejection', reportRuntimeError);
+
   console.debug(
     '[html-preview] ' +
       JSON.stringify({

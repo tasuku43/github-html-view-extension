@@ -10,6 +10,7 @@
   const {
     blobUrl,
     viewTransition,
+    viewCoordinator,
     previewSession,
     settings,
     githubDom,
@@ -28,9 +29,33 @@
   const SETTINGS_KEY = settings.STORAGE_KEY;
 
   const STATES = previewSession.PHASES;
+  const VIEW_COORDINATOR = viewCoordinator.create();
+  const BOOTSTRAP_MARK = 'data-ghpreview-bootstrap';
   let previewState = 'idle';
   let previewErrorCode = null;
   let operation = null;
+  let previewControlExpected = false;
+  let lastViewSwitchRoot = null;
+
+  function isHtmlRoute(href = location.href) {
+    const file = blobUrl.parseFileUrl(href);
+    return file !== null && blobUrl.isHtmlPath(file.refAndPath);
+  }
+
+  function setBootstrapPending(pending) {
+    if (!document.documentElement || !isHtmlRoute()) {
+      return;
+    }
+    if (pending) {
+      document.documentElement.setAttribute(BOOTSTRAP_MARK, 'pending');
+    } else {
+      document.documentElement.removeAttribute(BOOTSTRAP_MARK);
+    }
+  }
+
+  // Set the gate before GitHub paints its first file-view selection. This only applies to
+  // supported HTML routes; Markdown and unrelated GitHub pages are never hidden.
+  setBootstrapPending(true);
 
   function operationFor(href) {
     if (previewSession.isCurrent(operation, operation, href)) {
@@ -100,9 +125,85 @@
     }
   }
 
+  function beginViewIntent(target) {
+    const currentView = viewTransition.inspect(location.href).selectedView;
+    const state = VIEW_COORDINATOR.begin(target, currentView);
+    debug(
+      'view-intent-started',
+      {
+        target,
+        previousView: currentView,
+        transitionId: state.transactionId,
+      },
+      operation,
+    );
+    return state;
+  }
+
+  function ensureViewIntent(target) {
+    const state = VIEW_COORDINATOR.snapshot();
+    if (state.transactionId === null || state.desiredView !== target) {
+      return beginViewIntent(target);
+    }
+    return state;
+  }
+
+  function commitPresentedView(view, current = operation) {
+    const hostLabel = view === viewTransition.VIEWS.PREVIEW
+      ? viewTransition.nativeViewFor(location.href)
+      : view;
+    githubDom.markPreviewSelected(view === viewTransition.VIEWS.PREVIEW, hostLabel);
+    const state = VIEW_COORDINATOR.commitPresented(view);
+    const hostSelection = githubDom.viewSwitchState();
+    debug(
+      'view-selection-applied',
+      {
+        selectedView: view,
+        presentedView: state.presentedView,
+        nativeSelected: hostSelection.selected,
+        nativeReady: hostSelection.ready,
+        transitionId: state.transactionId,
+      },
+      current,
+    );
+    if (githubDom.hasPreviewLink() && hostSelection.ready) {
+      setBootstrapPending(false);
+    }
+    return state;
+  }
+
+  function finishViewIntent(view, hostSelection = githubDom.viewSwitchState()) {
+    const state = VIEW_COORDINATOR.snapshot();
+    if (state.transactionId === null || state.desiredView !== view || !hostSelection.ready) {
+      return false;
+    }
+    const expectedNative = view === viewTransition.VIEWS.PREVIEW
+      ? viewTransition.VIEWS.CODE
+      : view;
+    if (hostSelection.selected !== expectedNative || !githubDom.hasPreviewLink()) {
+      return false;
+    }
+    const settled = VIEW_COORDINATOR.finish();
+    setBootstrapPending(false);
+    debug(
+      'view-transition-settled',
+      {
+        selectedView: view,
+        nativeSelected: hostSelection.selected,
+        transitionId: state.transactionId,
+      },
+      operation,
+    );
+    return settled;
+  }
+
   // After an extension reload, an existing tab's content script can no longer use the
   // chrome API. After one failure, stop touching the extension API.
   let extensionAlive = true;
+  // GitHub SPA view changes do not change the repository settings. Reuse the last
+  // normalized snapshot so the replacement view can receive Preview without waiting for a
+  // second storage round trip. The storage change listener below invalidates this snapshot.
+  let settingsSnapshot = null;
 
   function storageGet(key) {
     return new Promise(resolve => {
@@ -229,7 +330,10 @@
    * remains unchanged.
    */
   async function isEnabled(parsed, current) {
-    const loaded = settings.normalize(await storageGet(SETTINGS_KEY));
+    if (settingsSnapshot === null) {
+      settingsSnapshot = settings.normalize(await storageGet(SETTINGS_KEY));
+    }
+    const loaded = settingsSnapshot;
     debug(
       'settings-loaded',
       {
@@ -269,11 +373,28 @@
     teardown('idle');
   }
 
+  function installPreviewControl() {
+    githubDom.ensureStyle(chrome.runtime.getURL('ui.css'));
+    return githubDom.insertPreviewLink({
+      href: blobUrl.previewHref(location.href),
+      onPreview: () => {
+        ensureViewIntent(viewTransition.VIEWS.PREVIEW);
+        const plan = viewTransition.plan(location.href, viewTransition.VIEWS.PREVIEW);
+        const destination = plan.destinationHref || blobUrl.previewHref(location.href);
+        go(destination, viewTransition.VIEWS.PREVIEW);
+        return false;
+      },
+    });
+  }
+
   async function apply() {
     setState('detecting');
     // Accept Blame too. It shows the same file, so Preview remains available.
     const file = blobUrl.parseFileUrl(location.href);
     if (file === null || !blobUrl.isHtmlPath(file.refAndPath)) {
+      if (document.documentElement) {
+        document.documentElement.removeAttribute(BOOTSTRAP_MARK);
+      }
       teardown('idle');
       return;
     }
@@ -290,28 +411,30 @@
     setState('checking-settings', null, current);
     const access = await isEnabled(file, current);
     if (!access.allowed) {
+      previewControlExpected = false;
       teardown('disabled', current, access.errorCode);
       return;
     }
     current.settings = access.settings;
+    previewControlExpected = true;
     if (isStale(current)) {
       return;
     }
 
-    githubDom.ensureStyle(chrome.runtime.getURL('ui.css'));
-    githubDom.insertPreviewLink({
-      onPreview: () => {
-        const plan = viewTransition.plan(location.href, viewTransition.VIEWS.PREVIEW);
-        go(plan.destinationHref || blobUrl.previewHref(location.href));
-      },
-    });
+    installPreviewControl();
 
     // Blame keeps Preview available but does not select or render it. Blob with no
     // `?plain=1` is the only state that owns the Preview surface.
+    const selectedView = viewTransition.inspect(location.href).selectedView;
     const wantsPreview = viewTransition.inspect(location.href).renderPreview;
 
-    githubDom.markPreviewSelected(wantsPreview);
-
+    commitPresentedView(selectedView, current);
+    const hostSelection = githubDom.viewSwitchState();
+    lastViewSwitchRoot = hostSelection.root;
+    finishViewIntent(selectedView, hostSelection);
+    if (githubDom.hasPreviewLink() && hostSelection.ready) {
+      setBootstrapPending(false);
+    }
     if (!wantsPreview) {
       unmount('view-change', current);
       setState('idle', null, current);
@@ -338,17 +461,40 @@
   }
 
   /*
-   * Switch views by updating the URL and applying the current page again.
+   * Switch views through GitHub's SPA router and apply the current page again.
    *
-   * Update the observed URL at the same time. Otherwise iframe insertion can look like a
-   * navigation and trigger a remove-and-remount loop.
+   * Cross-route Preview uses GitHub's history/popstate path so the switch can settle in
+   * place. Blob Code transitions are also resolved in place. A Blame -> Code transition is
+   * delegated to GitHub's native SPA handler so the repository shell remains mounted; when
+   * GitHub lands on the Blob route, the observer adds the extension's `?plain=1` marker with
+   * `history.replaceState` instead of forcing a second document navigation.
    */
-  function go(href) {
-    // Blame to Preview changes the page path; let GitHub rebuild that view.
+  function go(href, target = null) {
+    if (target !== null) {
+      ensureViewIntent(target);
+    }
+    // Cross-route transitions are observed until GitHub's native switch settles. For a
+    // Preview route, project the user's selection onto the current GitHub switch before
+    // changing the URL so the old Blame selection cannot flash as an intermediate state.
+    // The replacement switch is reconciled again after GitHub has rendered it.
     if (new URL(href).pathname !== location.pathname) {
-      location.href = href;
+      beginNavigationTransition(target);
+      if (target === viewTransition.VIEWS.PREVIEW) {
+        commitPresentedView(viewTransition.VIEWS.PREVIEW);
+        history.pushState(null, '', href);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+      } else {
+        location.href = href;
+      }
       return;
     }
+    if (target === viewTransition.VIEWS.PREVIEW) {
+      commitPresentedView(viewTransition.VIEWS.PREVIEW);
+    } else if (target === viewTransition.VIEWS.CODE) {
+      commitPresentedView(viewTransition.VIEWS.CODE);
+    }
+    pendingNavigation = null;
+    clearNavigationTimer();
     history.replaceState(null, '', href);
     seen = location.href;
     apply();
@@ -385,6 +531,11 @@
   function teardown(nextState = 'idle', current = operation, errorCode = null) {
     unmount('teardown', current);
     githubDom.removePreviewLink();
+    previewControlExpected = false;
+    lastViewSwitchRoot = null;
+    if (document.documentElement) {
+      document.documentElement.removeAttribute(BOOTSTRAP_MARK);
+    }
     setState(nextState, errorCode, current);
   }
 
@@ -796,6 +947,243 @@
    */
   let seen = location.href;
   let timer = null;
+  let navigationTimer = null;
+  let pendingNavigation = null;
+  const NAVIGATION_SETTLE_TIMEOUT_MS = 2000;
+  const NAVIGATION_SETTLE_QUIET_MS = 32;
+  const NAVIGATION_SETTLE_POLL_MS = 32;
+  const NAVIGATION_MUTATION_DEBOUNCE_MS = 64;
+
+  function clearNavigationTimer() {
+    if (navigationTimer !== null) {
+      clearTimeout(navigationTimer);
+      navigationTimer = null;
+    }
+  }
+
+  /**
+   * Observe one navigation intent while GitHub replaces its file-view switch. The
+   * extension must not insert/remove/reselect Preview for every intermediate DOM snapshot.
+   */
+  function beginNavigationTransition(target = null) {
+    clearNavigationTimer();
+    // Close the visible gap before GitHub removes the old switch. The replacement switch
+    // is not ready until both native items and the Preview peer have been reconciled.
+    // Hiding only this small control prevents a transient Code/Blame-only state from
+    // looking like a Preview selection during the host's DOM swap.
+    setBootstrapPending(true);
+    if (target !== null) {
+      ensureViewIntent(target);
+      VIEW_COORDINATOR.beginHostNavigation();
+    }
+    const originSignature = githubDom.viewSwitchState().signature;
+    const settleTarget =
+      target === viewTransition.VIEWS.PREVIEW
+        ? viewTransition.VIEWS.CODE
+        : target || viewTransition.nativeViewFor(location.href);
+    debug(
+      'native-navigation-started',
+      { target: target || settleTarget, settleTarget },
+      operation,
+    );
+    pendingNavigation = {
+      originHref: location.href,
+      href: null,
+      intentTarget: target || settleTarget,
+      target: settleTarget,
+      originSignature,
+      startedAt: Date.now(),
+      stableSince: null,
+      lastSignature: null,
+    };
+  }
+
+  function queueNavigationAfterUrlChange(previousHref) {
+    const current = pendingNavigation;
+    if (current === null || current.originHref !== previousHref) {
+      pendingNavigation = {
+        originHref: previousHref,
+        href: location.href,
+        intentTarget: viewTransition.nativeViewFor(location.href),
+        target: viewTransition.nativeViewFor(location.href),
+        originSignature: null,
+        startedAt: Date.now(),
+        stableSince: null,
+        lastSignature: null,
+      };
+    } else {
+      current.href = location.href;
+      current.target = current.target || viewTransition.nativeViewFor(location.href);
+      current.stableSince = null;
+      current.lastSignature = null;
+    }
+    scheduleNavigationReconcile();
+  }
+
+  function reconcileNavigation() {
+    navigationTimer = null;
+    const current = pendingNavigation;
+    if (current === null) {
+      return;
+    }
+
+    const now = Date.now();
+    if (location.href === current.originHref) {
+      if (now - current.startedAt >= NAVIGATION_SETTLE_TIMEOUT_MS) {
+        debug('navigation-cancelled', { reason: 'url-unchanged' });
+        pendingNavigation = null;
+        return;
+      }
+      scheduleNavigationReconcile();
+      return;
+    }
+
+    if (githubDom.isMissingFilePage()) {
+      setBootstrapPending(false);
+      pendingNavigation = null;
+      rejectMissingFilePage();
+      return;
+    }
+
+    const expected = current.target || viewTransition.nativeViewFor(location.href);
+    const host = githubDom.viewSwitchState();
+    const hostRootChanged = host.root !== lastViewSwitchRoot;
+    if (previewControlExpected && (hostRootChanged || !githubDom.hasPreviewLink())) {
+      setBootstrapPending(true);
+    }
+    lastViewSwitchRoot = host.root;
+    const coordinatorState = VIEW_COORDINATOR.observeHost({
+      view: host.selected,
+      ready: host.ready,
+      signature: host.signature,
+    });
+    if (host.signature !== current.lastSignature) {
+      debug(
+        'view-transition-observed',
+        {
+          expected,
+          selected: host.selected,
+          ready: host.ready,
+          signature: host.signature,
+          transitionPhase: coordinatorState.phase,
+          transitionId: coordinatorState.transactionId,
+        },
+        operation,
+      );
+    }
+
+    // GitHub may have replaced the switch before the controller's final apply() can run.
+    // Restore the Preview peer as soon as the new native switch exists, but leave its
+    // selection to the final settled reconciliation so host readiness remains observable.
+    const nextFile = blobUrl.parseFileUrl(location.href);
+    if (
+      current.intentTarget === viewTransition.VIEWS.CODE &&
+      nextFile !== null &&
+      nextFile.view === 'blob' &&
+      new URL(location.href).searchParams.get('plain') !== '1'
+    ) {
+      // GitHub's native Blame -> Code transition keeps the SPA shell and lands on the
+      // Blob route without the explicit plain marker. Canonicalize that route in place so
+      // the extension's Code/Preview contract survives without triggering a second document
+      // navigation (which would discard the repository file tree).
+      const canonicalCodeHref = viewTransition.codeHref(location.href);
+      if (canonicalCodeHref !== location.href) {
+        history.replaceState(history.state, '', canonicalCodeHref);
+        seen = location.href;
+        debug('code-route-canonicalized', { route: 'blob' }, operation);
+      }
+    }
+    if (
+      host.ready &&
+      settingsSnapshot !== null &&
+      nextFile !== null &&
+      blobUrl.isHtmlPath(nextFile.refAndPath) &&
+      settingsSnapshot.previewEnabled &&
+      settings.isAllowed(blobUrl.repoKey(nextFile), settingsSnapshot) &&
+      !githubDom.hasPreviewLink()
+    ) {
+      const controlInserted = installPreviewControl();
+      debug(
+        'view-control-reconciled',
+        { inserted: controlInserted, selected: host.selected },
+        operation,
+      );
+    }
+
+    // A Preview navigation from Blame changes the route to Blob, whose native GitHub
+    // selection is Code. Do not wait for that transient Code selection to settle: once
+    // the new native switch has replaced the old Blame switch, project Preview into it
+    // in the same reconciliation turn. Waiting for Code here is the visible flicker the
+    // extension is meant to avoid.
+    const previewTransitionReady =
+      current.intentTarget === viewTransition.VIEWS.PREVIEW &&
+      nextFile !== null &&
+      nextFile.view === 'blob' &&
+      blobUrl.shouldPreview(location.href) &&
+      host.ready &&
+      (current.originSignature === null || host.signature !== current.originSignature) &&
+      githubDom.hasPreviewLink();
+    if (previewTransitionReady) {
+      pendingNavigation = null;
+      commitPresentedView(viewTransition.VIEWS.PREVIEW);
+      setBootstrapPending(false);
+      debug(
+        'preview-transition-committed',
+        {
+          selectedView: viewTransition.VIEWS.PREVIEW,
+          nativeSelected: host.selected,
+          signature: host.signature,
+          transitionId: coordinatorState.transactionId,
+        },
+        operation,
+      );
+      apply();
+      return;
+    }
+
+    const settled = expected !== null && host.ready && host.selected === expected;
+    const wasStable = current.stableSince !== null;
+    if (settled && host.signature === current.lastSignature) {
+      if (current.stableSince === null) {
+        current.stableSince = now;
+      }
+    } else {
+      current.lastSignature = host.signature;
+      current.stableSince = settled ? now : null;
+    }
+    if (!wasStable && current.stableSince !== null) {
+      debug(
+        'view-transition-host-settled',
+        { expected, selected: host.selected, signature: host.signature },
+        operation,
+      );
+    }
+
+    if (
+      settled &&
+      current.stableSince !== null &&
+      now - current.stableSince >= NAVIGATION_SETTLE_QUIET_MS
+    ) {
+      pendingNavigation = null;
+      apply();
+      return;
+    }
+
+    if (now - current.startedAt >= NAVIGATION_SETTLE_TIMEOUT_MS) {
+      debug('navigation-settle-timeout', { expected, selected: host.selected });
+      pendingNavigation = null;
+      apply();
+      return;
+    }
+    scheduleNavigationReconcile();
+  }
+
+  function scheduleNavigationReconcile() {
+    if (navigationTimer !== null) {
+      return;
+    }
+    navigationTimer = setTimeout(reconcileNavigation, NAVIGATION_SETTLE_POLL_MS);
+  }
 
   function shouldReapplyAfterMutation() {
     const file = blobUrl.parseFileUrl(location.href);
@@ -829,20 +1217,64 @@
     );
   }
 
+  function handleUrlChange() {
+    const previousHref = seen;
+    seen = location.href;
+    // Clear the previous page before applying the new one, including restoring hidden
+    // source content. Record the abandoned async operation instead of letting a late
+    // response mutate the new page.
+    abandonOperation('navigation');
+    const nextFile = blobUrl.parseFileUrl(location.href);
+    if (nextFile === null || !blobUrl.isHtmlPath(nextFile.refAndPath)) {
+      pendingNavigation = null;
+      clearNavigationTimer();
+      teardown('idle');
+      return;
+    }
+    setBootstrapPending(true);
+    queueNavigationAfterUrlChange(previousHref);
+  }
+
   function onMutated() {
+    // URL changes are the navigation signal. Process them immediately instead of waiting
+    // for the ordinary DOM-settle debounce; the native GitHub view switch is already the
+    // visible transition surface and should not be held behind extension bookkeeping.
+    if (location.href !== seen) {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      handleUrlChange();
+      return;
+    }
+    const host = githubDom.viewSwitchState();
+    const hostRootChanged = host.root !== lastViewSwitchRoot;
+    if (previewControlExpected && (hostRootChanged || !githubDom.hasPreviewLink())) {
+      setBootstrapPending(true);
+      lastViewSwitchRoot = host.root;
+      if (pendingNavigation !== null) {
+        reconcileNavigation();
+      } else {
+        apply();
+      }
+      return;
+    }
     if (timer !== null) {
+      return;
+    }
+    if (pendingNavigation !== null) {
+      reconcileNavigation();
       return;
     }
     timer = setTimeout(() => {
       timer = null;
-      const changed = location.href !== seen;
-      if (changed) {
-        seen = location.href;
-        // Clear the previous page before applying the new one, including restoring hidden
-        // source content. Record the abandoned async operation instead of letting it
-        // silently mutate the new page.
-        abandonOperation('navigation');
-        githubDom.removePreviewLink();
+      if (location.href !== seen) {
+        handleUrlChange();
+        return;
+      }
+      if (pendingNavigation !== null) {
+        scheduleNavigationReconcile();
+        return;
       }
       if (githubDom.isMissingFilePage()) {
         if (operation !== null || githubDom.hasPreviewLink() || githubDom.hasFrame() || githubDom.hasError()) {
@@ -851,10 +1283,10 @@
         }
         return;
       }
-      if (changed || shouldReapplyAfterMutation()) {
+      if (shouldReapplyAfterMutation()) {
         apply();
       }
-    }, 150);
+    }, NAVIGATION_MUTATION_DEBOUNCE_MS);
   }
 
   new MutationObserver(onMutated).observe(document.documentElement, {
@@ -902,6 +1334,7 @@
         return;
       }
       debug('settings-changed', { source: 'popup' }, operation);
+      settingsSnapshot = null;
       cache.clear();
       loadFailures.clear();
       rendered = null;
@@ -917,23 +1350,56 @@
     if (file === null) {
       return;
     }
+    const hostSelection = githubDom.viewSwitchState();
+    debug(
+      'view-intent',
+      {
+        target: label,
+        nativeSelected: hostSelection.selected,
+        nativeReady: hostSelection.ready,
+      },
+      operation,
+    );
+    if (label === 'code' || label === 'blame') {
+      ensureViewIntent(label);
+      // Project the native destination immediately, matching GitHub's own segmented
+      // control timing. The coordinator keeps this as the single presentation write while
+      // the route and the file view are still being replaced.
+      if (label === 'blame') {
+        commitPresentedView(viewTransition.VIEWS.BLAME);
+      }
+    }
     if (label === 'code') {
       const plan = viewTransition.plan(location.href, viewTransition.VIEWS.CODE);
+      if (file.view === 'blame') {
+        // Blame's Code control is a GitHub-owned SPA transition. Let its native handler
+        // update the route so the repository file tree remains mounted; the capture-phase
+        // listener has already recorded the intent and the observer will reconcile Preview
+        // after GitHub replaces the file view.
+        beginNavigationTransition(viewTransition.VIEWS.CODE);
+        debug(
+          'native-code-navigation-delegated',
+          { route: 'blame', plannedAction: plan.action },
+          operation,
+        );
+        return;
+      }
       if (plan.destinationHref !== null) {
         // Code is a source-view decision owned by the extension. Prevent GitHub's
-        // default handler from racing the canonical destination, especially on Blame.
+        // default handler from racing the canonical destination on the Blob route.
         if (event && typeof event.preventDefault === 'function') {
           event.preventDefault();
         }
-        go(plan.destinationHref);
+        go(plan.destinationHref, viewTransition.VIEWS.CODE);
         return;
       }
-      go(blobUrl.sourceHref(location.href));
+      go(blobUrl.sourceHref(location.href), viewTransition.VIEWS.CODE);
       return;
     }
     if (label === 'blame') {
-      // Let GitHub perform the normal /blob/ -> /blame/ navigation. Preview remains a
-      // visible, unselected peer on the resulting Blame page.
+      // Let GitHub's native route handler own Blame navigation. The extension only records
+      // the intent and waits for the host switch to settle.
+      beginNavigationTransition(viewTransition.VIEWS.BLAME);
     }
   });
 

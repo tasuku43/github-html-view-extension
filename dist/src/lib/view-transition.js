@@ -67,6 +67,19 @@
     };
   }
 
+  /**
+   * Return the native GitHub view that should be settled before the extension projects
+   * Preview into the switch. GitHub does not have a native HTML Preview view, so both
+   * the extension's Preview route and Code route settle on GitHub's Code item first.
+   */
+  function nativeViewFor(href) {
+    const current = inspect(href);
+    if (!current.supported) {
+      return null;
+    }
+    return current.route === ROUTES.BLAME ? VIEWS.BLAME : VIEWS.CODE;
+  }
+
   /** Build the canonical Code destination, including the Blame -> Blob transition. */
   function codeHref(href) {
     return blobUrl.sourceHref(blobUrl.previewHref(href));
@@ -148,6 +161,7 @@
     VIEWS,
     ROUTES,
     inspect,
+    nativeViewFor,
     codeHref,
     plan,
   };

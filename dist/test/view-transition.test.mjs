@@ -49,6 +49,13 @@ test('describes Blame as selected Blame while keeping Preview available', () => 
   });
 });
 
+test('settles HTML Preview routes on the native GitHub view first', () => {
+  assert.equal(viewTransition.nativeViewFor(BLOB_PREVIEW), viewTransition.VIEWS.CODE);
+  assert.equal(viewTransition.nativeViewFor(BLOB_CODE), viewTransition.VIEWS.CODE);
+  assert.equal(viewTransition.nativeViewFor(BLAME), viewTransition.VIEWS.BLAME);
+  assert.equal(viewTransition.nativeViewFor('https://github.com/example-owner/design-docs'), null);
+});
+
 test('does not treat Markdown or non-file pages as previewable', () => {
   assert.equal(viewTransition.inspect(BLOB_PREVIEW.replace('.html', '.md')).supported, false);
   assert.equal(viewTransition.inspect('https://github.com/example-owner/design-docs').supported, false);
@@ -102,7 +109,7 @@ test('plans Blame to Code as a Blob source-view navigation', () => {
   });
 });
 
-test('delegates navigation to GitHub for Blame while preserving the Preview contract', () => {
+test('describes Blame as a host-owned route transition while preserving the Preview contract', () => {
   const plan = viewTransition.plan(BLOB_PREVIEW, viewTransition.VIEWS.BLAME);
   assert.equal(plan.action, 'follow-github');
   assert.equal(plan.destinationHref, null);
