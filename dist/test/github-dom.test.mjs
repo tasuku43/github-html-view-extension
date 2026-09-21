@@ -36,3 +36,19 @@ test('does not classify a normal GitHub file page as missing', () => {
 
   assert.equal(githubDom.isMissingFilePage(), false);
 });
+
+test('keeps forms and popups disabled while allowing optional dialogs', () => {
+  const githubDom = loadGithubDom({
+    title: 'page-with-sections.html at main · github/docs · GitHub',
+    querySelector: () => null,
+  });
+
+  assert.equal(
+    githubDom.sandboxPolicy({ forms: true, popups: true, modals: false }),
+    'allow-scripts',
+  );
+  assert.equal(
+    githubDom.sandboxPolicy({ forms: true, popups: true, modals: true }),
+    'allow-scripts allow-modals',
+  );
+});

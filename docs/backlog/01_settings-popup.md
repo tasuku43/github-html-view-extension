@@ -15,12 +15,10 @@ and inactive by default, while still making the exact repository approval model 
 
   ```json
   {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "previewEnabled": false,
     "capabilities": {
       "javascript": false,
-      "forms": false,
-      "popups": false,
       "modals": false
     },
     "repositories": []
@@ -36,6 +34,8 @@ and inactive by default, while still making the exact repository approval model 
   spelling.
 - Save changes immediately and show a compact saved state.
 - Keep the Popup usable at Chrome Action Popup dimensions with keyboard-accessible controls.
+- Show form submission and new-window behavior as read-only `Not supported` limits rather than
+  presenting them as configurable switches.
 - Reuse the existing product visual language; do not introduce React or a framework-specific
   component system.
 
@@ -45,10 +45,10 @@ and inactive by default, while still making the exact repository approval model 
 - When the repository is not allowlisted, the content script must not fetch or mount a
   Preview.
 - The Worker must recheck the normalized settings before serving a fetch request.
-- The sandbox must receive only the optional capabilities that are enabled:
-  `allow-forms`, `allow-popups`, and `allow-modals`. Its bundled bootstrap always requires
-  `allow-scripts`; the JavaScript capability controls repository scripts and inline event
-  handlers before the document is sent to the sandbox.
+- The sandbox must receive only the optional capability that is enabled: `allow-modals`.
+  Its bundled bootstrap always requires `allow-scripts`; the JavaScript capability controls
+  repository scripts and inline event handlers before the document is sent to the sandbox.
+- Form submission and popup creation remain disabled by design.
 - JavaScript-disabled rendering must remove scripts and inline event handlers according to
   the existing HTML policy.
 

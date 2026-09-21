@@ -141,6 +141,46 @@
 
       .capability-row.focused { background: rgba(68, 147, 248, .08); }
 
+      .limits-list {
+        margin-top: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .limit-row {
+        display: flex;
+        min-height: 42px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .limit-row:last-child { border-bottom: 0; }
+
+      .limit-copy strong,
+      .limit-copy small {
+        display: block;
+      }
+
+      .limit-copy small {
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .unsupported-badge {
+        flex: none;
+        padding: 3px 6px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
       .switch {
         position: relative;
         width: 32px;
@@ -299,16 +339,28 @@
           <h3>Preview capabilities</h3>
           <div class="capability-list">
             <div class="capability-row">
-              <span>Run JavaScript</span>
+              <span>Run inline JavaScript</span>
               <span class="switch on"></span>
             </div>
             <div class="capability-row focused">
-              <span>Allow form submission</span>
+              <span>Allow alerts and prompts</span>
               <span class="switch on focused"></span>
             </div>
-            <div class="capability-row">
-              <span>Allow popups</span>
-              <span class="switch"></span>
+          </div>
+          <div class="limits-list">
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>Form submission</strong>
+                <small>Forms stay visible, but submitting is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
+            </div>
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>New windows and popups</strong>
+                <small>Opening a new window is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
             </div>
           </div>
           <div class="repository-item">
@@ -331,16 +383,28 @@
           <h3>Preview capabilities</h3>
           <div class="capability-list">
             <div class="capability-row">
-              <span>Run JavaScript</span>
+              <span>Run inline JavaScript</span>
               <span class="switch on"></span>
             </div>
             <div class="capability-row row-focus">
-              <span>Allow form submission</span>
+              <span>Allow alerts and prompts</span>
               <span class="switch on"></span>
             </div>
-            <div class="capability-row">
-              <span>Allow popups</span>
-              <span class="switch"></span>
+          </div>
+          <div class="limits-list">
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>Form submission</strong>
+                <small>Forms stay visible, but submitting is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
+            </div>
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>New windows and popups</strong>
+                <small>Opening a new window is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
             </div>
           </div>
           <div class="repository-item">
@@ -361,16 +425,28 @@
           <h3>Preview capabilities</h3>
           <div class="capability-list">
             <div class="capability-row">
-              <span>Run JavaScript</span>
+              <span>Run inline JavaScript</span>
               <span class="switch on"></span>
             </div>
             <div class="capability-row">
-              <span>Allow form submission</span>
+              <span>Allow alerts and prompts</span>
               <span class="switch on"></span>
             </div>
-            <div class="capability-row">
-              <span>Allow popups</span>
-              <span class="switch"></span>
+          </div>
+          <div class="limits-list">
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>Form submission</strong>
+                <small>Forms stay visible, but submitting is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
+            </div>
+            <div class="limit-row">
+              <span class="limit-copy">
+                <strong>New windows and popups</strong>
+                <small>Opening a new window is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
             </div>
           </div>
           <div class="repository-item expanded-repository-item">

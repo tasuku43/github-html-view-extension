@@ -38,12 +38,10 @@ the `settings` key:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "previewEnabled": false,
   "capabilities": {
     "javascript": false,
-    "forms": false,
-    "popups": false,
     "modals": false
   },
   "repositories": []
@@ -58,6 +56,8 @@ the `settings` key:
 - The Worker normalizes and rechecks settings before every fetch.
 - `previewEnabled` is the master switch. Capability switches are disabled in the Popup
   while the master switch is off, and all switches start off.
+- The Popup also shows form submission and new-window behavior as read-only `Not supported`
+  limits; they are not persisted settings.
 
 Adding a repository means: *HTML in this repository may execute as soon as it is opened.*
 That includes code written by anyone who can open a pull request against it.
@@ -140,9 +140,10 @@ containing `sandbox allow-scripts`, which means:
 - inline `<script>` executes — charts and diagrams work.
 
 The `<iframe>` element always carries `allow-scripts` for the bundled bootstrap. It adds
-`allow-forms`, `allow-popups`, and `allow-modals` only when their corresponding settings
-are enabled. When the JavaScript capability is off, repository `<script>` elements and
-inline event-handler attributes are removed before the document is sent to the sandbox.
+`allow-modals` only when that setting is enabled. Form submission and popup creation remain
+disabled by the sandbox policy. When the JavaScript capability is off, repository `<script>`
+elements and inline event-handler attributes are removed before the document is sent to the
+sandbox.
 
 **`allow-same-origin` appears nowhere** — not on the element, not in the page CSP.
 

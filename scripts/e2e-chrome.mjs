@@ -120,10 +120,26 @@ async function configureSettingsThroughPopup(context, worker) {
   const firstRun = await popup.evaluate(() => ({
     previewEnabled: document.querySelector('#preview-enabled').checked,
     capabilityDisabled: document.querySelector('#capability-javascript').disabled,
+    capabilityIds: Array.from(document.querySelectorAll('.capability-row input')).map(input => input.id),
+    limits: Array.from(document.querySelectorAll('.limit-row')).map(row => ({
+      name: row.querySelector('strong').textContent.trim(),
+      status: row.querySelector('.unsupported-badge').textContent.trim(),
+    })),
     repositoryCount: document.querySelector('#repository-list').childElementCount,
   }));
   assert(!firstRun.previewEnabled, 'Preview should be off on a fresh profile.');
   assert(firstRun.capabilityDisabled, 'Capabilities should be disabled until Preview is enabled.');
+  assert(
+    JSON.stringify(firstRun.capabilityIds) === JSON.stringify(['capability-javascript', 'capability-modals']),
+    'The Popup exposes an unsupported capability.',
+  );
+  assert(
+    JSON.stringify(firstRun.limits) === JSON.stringify([
+      { name: 'Form submission', status: 'Not supported' },
+      { name: 'New windows and popups', status: 'Not supported' },
+    ]),
+    'The Popup does not clearly expose the enforced Preview limits.',
+  );
   assert(firstRun.repositoryCount === 0, 'A fresh profile should have no repositories.');
 
   await popup.locator('#repository-input').fill(repository);

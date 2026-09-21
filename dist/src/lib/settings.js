@@ -8,8 +8,8 @@
   'use strict';
 
   const STORAGE_KEY = 'settings';
-  const SCHEMA_VERSION = 1;
-  const CAPABILITIES = ['javascript', 'forms', 'popups', 'modals'];
+  const SCHEMA_VERSION = 2;
+  const CAPABILITIES = ['javascript', 'modals'];
   const ENTRY = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
   function createDefault() {
@@ -18,8 +18,6 @@
       previewEnabled: false,
       capabilities: {
         javascript: false,
-        forms: false,
-        popups: false,
         modals: false,
       },
       repositories: [],

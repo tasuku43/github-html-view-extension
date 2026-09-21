@@ -9,9 +9,9 @@ const workerRoot = new URL('../src/', import.meta.url);
 function createWorker(
   fetchImpl,
   settingsValue = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     previewEnabled: true,
-    capabilities: { javascript: true, forms: false, popups: false, modals: false },
+    capabilities: { javascript: true, modals: false },
     repositories: ['example/project'],
   },
 ) {

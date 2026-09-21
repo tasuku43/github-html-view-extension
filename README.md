@@ -36,7 +36,8 @@ To load it in Chrome:
 3. Choose **Load unpacked**.
 4. Select the repository's `dist/` directory.
 5. Click the extension icon to open the Action Popup.
-6. Enable HTML Preview, add an exact `owner/repository` entry, and configure capabilities.
+6. Enable HTML Preview, add an exact `owner/repository` entry, and configure the optional
+   inline JavaScript and browser-dialog capabilities.
 
 The baseline documentation and tests live under `dist/`. The extension uses
 `dist/sandbox.html` as its iframe entry point; do not change that startup path while using

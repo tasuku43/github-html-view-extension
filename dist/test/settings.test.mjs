@@ -9,23 +9,21 @@ const { settings } = window.GHPREVIEW;
 
 test('creates the safe disabled-by-default settings object', () => {
   assert.deepEqual(settings.createDefault(), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     previewEnabled: false,
     capabilities: {
       javascript: false,
-      forms: false,
-      popups: false,
       modals: false,
     },
     repositories: [],
   });
 });
 
-test('normalizes capabilities and removes malformed or duplicate repositories', () => {
+test('normalizes supported capabilities and removes retired capabilities', () => {
   assert.deepEqual(
     settings.normalize({
       previewEnabled: true,
-      capabilities: { javascript: 1, forms: true, popups: true },
+      capabilities: { javascript: true, forms: true, popups: true, modals: true },
       repositories: [
         'Example-Owner/Example-Repo',
         'example-owner/example-repo',
@@ -34,12 +32,16 @@ test('normalizes capabilities and removes malformed or duplicate repositories', 
       ],
     }),
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       previewEnabled: true,
-      capabilities: { javascript: false, forms: true, popups: true, modals: false },
+      capabilities: { javascript: true, modals: true },
       repositories: ['Example-Owner/Example-Repo'],
     },
   );
+});
+
+test('exposes only the capabilities supported by the current product contract', () => {
+  assert.deepEqual(settings.CAPABILITIES, ['javascript', 'modals']);
 });
 
 test('rejects wildcard and malformed repository entries with distinct codes', () => {

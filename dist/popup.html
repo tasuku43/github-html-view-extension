@@ -34,30 +34,47 @@
           </div>
           <div id="capability-list" class="capability-list">
             <label class="capability-row">
-              <span>Run JavaScript</span>
+              <span class="capability-copy">
+                <strong>Run inline JavaScript</strong>
+                <small>Run classic scripts and inline event handlers.</small>
+              </span>
               <input id="capability-javascript" class="toggle-input" type="checkbox" role="switch">
               <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
             </label>
 
             <label class="capability-row">
-              <span>Allow form submission</span>
-              <input id="capability-forms" class="toggle-input" type="checkbox" role="switch">
-              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
-            </label>
-
-            <label class="capability-row">
-              <span>Allow popups</span>
-              <input id="capability-popups" class="toggle-input" type="checkbox" role="switch">
-              <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
-            </label>
-
-            <label class="capability-row">
-              <span>Allow browser dialogs</span>
+              <span class="capability-copy">
+                <strong>Allow alerts and prompts</strong>
+                <small>Allow alert, confirm, prompt, and print dialogs.</small>
+              </span>
               <input id="capability-modals" class="toggle-input" type="checkbox" role="switch">
               <span class="toggle mini-toggle" aria-hidden="true"><span></span></span>
             </label>
           </div>
           <p id="capability-help" class="helper">Enable HTML preview to configure capabilities.</p>
+        </section>
+
+        <section class="popup-section limits-section" aria-labelledby="limits-title">
+          <div class="section-title">
+            <h2 id="limits-title">Preview limits</h2>
+            <span>Always enforced</span>
+          </div>
+          <div class="limits-list">
+            <div class="limit-row">
+              <span class="capability-copy">
+                <strong>Form submission</strong>
+                <small>Forms stay visible, but submitting is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
+            </div>
+            <div class="limit-row">
+              <span class="capability-copy">
+                <strong>New windows and popups</strong>
+                <small>Opening a new window is disabled.</small>
+              </span>
+              <span class="unsupported-badge">Not supported</span>
+            </div>
+          </div>
         </section>
       </section>
 

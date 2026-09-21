@@ -65,12 +65,10 @@ The stored shape is:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "previewEnabled": false,
   "capabilities": {
     "javascript": false,
-    "forms": false,
-    "popups": false,
     "modals": false
   },
   "repositories": []
@@ -80,12 +78,15 @@ The stored shape is:
 ### Settings behavior
 
 - `previewEnabled` is the global master switch.
-- All capabilities are global and independent.
+- The available capabilities are global and independent: inline classic JavaScript and
+  browser dialogs.
 - The initial value of every switch is off.
 - The initial allowlist is empty.
 - The Popup must make the disabled-by-default behavior obvious.
 - Changes save immediately and show a clear saved state or equivalent feedback.
 - The Popup must remain usable at a compact Chrome Action Popup size.
+- The Popup must show form submission and new-window behavior as read-only `Not supported`
+  limits rather than misleading disabled switches.
 - All user-facing text is English.
 
 ### Repository allowlist
@@ -129,7 +130,9 @@ Only a self-contained document may be previewed. Validation happens before any s
 
 When JavaScript is disabled, scripts and inline event handlers are removed before rendering. When it is enabled, only inline classic scripts are permitted by the policy. Runtime errors do not remove an otherwise rendered document; they produce an extension-owned warning.
 
-Forms remain visible in both modes. The Forms capability controls submission. Popups and browser dialogs are independently controlled by their corresponding capabilities.
+Forms remain visible and editable in both modes, but native form submission is intentionally
+disabled by the sandbox policy. Popup creation is also disabled. Browser dialogs are
+independently controlled by the optional dialogs capability.
 
 ## Preview surface and error UX
 
@@ -342,7 +345,7 @@ The Worker is the only network fetch boundary. It derives the raw file URL from 
 
 The iframe entry point is the extension-bundled `sandbox.html` with a session query parameter. It must not be replaced by `about:blank`, `srcdoc`, content-script-generated bootstrap markup, or dynamic script injection. The manifest must declare the sandbox page and the required web-accessible resources.
 
-The iframe uses an opaque origin: `allow-scripts` is required, while `allow-same-origin` is not allowed. `allow-forms`, `allow-popups`, and `allow-modals` are added only when their capabilities are enabled. Parent and child validate message source, origin expectations, protocol version, and session ID.
+The iframe uses an opaque origin: `allow-scripts` is required, while `allow-same-origin` is not allowed. `allow-modals` is added only when the optional dialogs capability is enabled. Form submission and popup creation remain disabled. Parent and child validate message source, origin expectations, protocol version, and session ID.
 
 ### Popup and design gallery
 

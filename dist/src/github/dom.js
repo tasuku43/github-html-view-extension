@@ -614,12 +614,6 @@
     // controls repository scripts separately in inlineDocument; it must not disable the
     // bootstrap that enforces the opaque-origin message boundary.
     const tokens = ['allow-scripts'];
-    if (capabilities.forms === true) {
-      tokens.push('allow-forms');
-    }
-    if (capabilities.popups === true) {
-      tokens.push('allow-popups');
-    }
     if (capabilities.modals === true) {
       tokens.push('allow-modals');
     }
@@ -1001,6 +995,7 @@
     hasPreviewLink,
     hasFrame,
     needsReconcile,
+    sandboxPolicy,
     getErrorCode,
     setPreviewMetadata,
     reconcileError,
